@@ -9,7 +9,6 @@ from __future__ import annotations
 import io
 import json
 import os
-import sqlite3
 import tempfile
 import threading
 import uuid
@@ -22,6 +21,9 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
+from sqlalchemy.exc import SQLAlchemyError
 
 from auditor import (
     audit_one,
@@ -54,7 +56,7 @@ def _otis_svg_inline() -> str:
         return "🦦"
 
 
-# ---------- audit history (SQLite) ----------
+# ---------- audit history (SQLAlchemy: SQLite locally, Postgres in cloud) ----------
 
 _CACHE_DIR = Path(os.getenv("AUDITOR_CACHE_DIR", Path(__file__).parent / ".cache"))
 _DB_PATH = _CACHE_DIR / "audits.db"
@@ -62,37 +64,74 @@ _LEGACY_JSONL_PATH = _CACHE_DIR / "history" / "audits.jsonl"
 
 _db_init_lock = threading.Lock()
 _db_initialized = False
+_engine: Engine | None = None
 
-_AUDITS_SCHEMA = """
-CREATE TABLE IF NOT EXISTS audits (
-    id                       TEXT PRIMARY KEY,
-    timestamp                TEXT NOT NULL,
-    source                   TEXT NOT NULL,
-    target                   TEXT NOT NULL,
-    preset                   TEXT,
-    strictness               TEXT,
-    custom_focus             TEXT,
-    llm_provider             TEXT,
-    llm_fallback_reason      TEXT,
-    overall_score            INTEGER,
-    summary                  TEXT,
-    scores_json              TEXT,
-    strengths                TEXT,
-    what_was_lacking         TEXT,
-    recommendations_json     TEXT,
-    transcript               TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_audits_timestamp ON audits(timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_audits_preset    ON audits(preset);
-CREATE INDEX IF NOT EXISTS idx_audits_provider  ON audits(llm_provider);
-CREATE INDEX IF NOT EXISTS idx_audits_score     ON audits(overall_score);
-"""
+_AUDITS_SCHEMA_STMTS = [
+    """
+    CREATE TABLE IF NOT EXISTS audits (
+        id                       TEXT PRIMARY KEY,
+        timestamp                TEXT NOT NULL,
+        source                   TEXT NOT NULL,
+        target                   TEXT NOT NULL,
+        preset                   TEXT,
+        strictness               TEXT,
+        custom_focus             TEXT,
+        llm_provider             TEXT,
+        llm_fallback_reason      TEXT,
+        overall_score            INTEGER,
+        summary                  TEXT,
+        scores_json              TEXT,
+        strengths                TEXT,
+        what_was_lacking         TEXT,
+        recommendations_json     TEXT,
+        transcript               TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_audits_timestamp ON audits(timestamp DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_audits_preset    ON audits(preset)",
+    "CREATE INDEX IF NOT EXISTS idx_audits_provider  ON audits(llm_provider)",
+    "CREATE INDEX IF NOT EXISTS idx_audits_score     ON audits(overall_score)",
+]
+
+_INSERT_COLS = (
+    "id, timestamp, source, target, preset, strictness, custom_focus, "
+    "llm_provider, llm_fallback_reason, overall_score, summary, scores_json, "
+    "strengths, what_was_lacking, recommendations_json, transcript"
+)
+_INSERT_PARAMS = (
+    ":id, :timestamp, :source, :target, :preset, :strictness, :custom_focus, "
+    ":llm_provider, :llm_fallback_reason, :overall_score, :summary, "
+    ":scores_json, :strengths, :what_was_lacking, :recommendations_json, "
+    ":transcript"
+)
 
 
-def _connect():
-    """Per-call connection. WAL mode is enabled in _ensure_db so concurrent
-    batch-worker writes are safe without a Python-side lock."""
-    return sqlite3.connect(_DB_PATH, timeout=10)
+def _resolve_db_url() -> str:
+    """Resolve the DB URL: env / Streamlit secrets / local SQLite file."""
+    url = os.getenv("DATABASE_URL", "").strip()
+    if not url:
+        try:
+            url = str(st.secrets.get("DATABASE_URL", "") or "").strip()
+        except (FileNotFoundError, AttributeError, KeyError):
+            url = ""
+    if not url:
+        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        return f"sqlite:///{_DB_PATH}"
+    # Supabase/Heroku sometimes hand out the legacy "postgres://" scheme.
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+    return url
+
+
+def _get_engine() -> Engine:
+    global _engine
+    if _engine is None:
+        _engine = create_engine(_resolve_db_url(), pool_pre_ping=True, future=True)
+    return _engine
+
+
+def _is_sqlite() -> bool:
+    return _get_engine().url.get_backend_name() == "sqlite"
 
 
 def _ensure_db() -> None:
@@ -102,18 +141,19 @@ def _ensure_db() -> None:
     with _db_init_lock:
         if _db_initialized:
             return
-        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        with _connect() as conn:
-            conn.executescript(_AUDITS_SCHEMA)
-            conn.execute("PRAGMA journal_mode = WAL;")
+        engine = _get_engine()
+        with engine.begin() as conn:
+            for stmt in _AUDITS_SCHEMA_STMTS:
+                conn.execute(text(stmt))
+            if _is_sqlite():
+                conn.exec_driver_sql("PRAGMA journal_mode = WAL;")
         _migrate_legacy_jsonl()
         _db_initialized = True
 
 
 def _migrate_legacy_jsonl() -> None:
-    """One-time import of audits.jsonl into the SQLite DB. The JSONL file is
-    renamed afterwards so it isn't re-imported on the next launch. Errors are
-    swallowed — migration must never break startup."""
+    """One-time import of audits.jsonl into the DB. Renames the file afterwards
+    so it isn't re-imported on the next launch. Errors are swallowed."""
     if not _LEGACY_JSONL_PATH.exists():
         return
     try:
@@ -127,14 +167,14 @@ def _migrate_legacy_jsonl() -> None:
                     r = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                rows.append(_record_to_row(r))
+                rows.append(_record_to_dict(r))
         if rows:
-            with _connect() as conn:
-                conn.executemany(
-                    "INSERT OR IGNORE INTO audits VALUES "
-                    "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    rows,
-                )
+            sql = text(
+                f"INSERT INTO audits ({_INSERT_COLS}) VALUES ({_INSERT_PARAMS}) "
+                "ON CONFLICT (id) DO NOTHING"
+            )
+            with _get_engine().begin() as conn:
+                conn.execute(sql, rows)
         _LEGACY_JSONL_PATH.rename(
             _LEGACY_JSONL_PATH.with_suffix(".jsonl.migrated")
         )
@@ -142,7 +182,7 @@ def _migrate_legacy_jsonl() -> None:
         pass
 
 
-def _coerce_int(v) -> Optional[int]:
+def _coerce_int(v):
     try:
         s = str(v).strip()
         if not s or s.lower() in ("nan", "none"):
@@ -152,36 +192,34 @@ def _coerce_int(v) -> Optional[int]:
         return None
 
 
-def _record_to_row(r: dict) -> tuple:
-    return (
-        r.get("id")
-        or (
+def _record_to_dict(r: dict) -> dict:
+    return {
+        "id": r.get("id") or (
             datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-")
             + uuid.uuid4().hex[:6]
         ),
-        r.get("timestamp") or datetime.now(timezone.utc).isoformat(),
-        r.get("source", "single"),
-        r.get("target", ""),
-        r.get("preset", ""),
-        r.get("strictness", ""),
-        r.get("custom_focus", ""),
-        r.get("llm_provider", ""),
-        r.get("llm_fallback_reason", ""),
-        _coerce_int(r.get("overall_score")),
-        r.get("summary", ""),
-        json.dumps(r.get("scores", {}) or {}, ensure_ascii=False),
-        r.get("strengths", ""),
-        r.get("what_was_lacking", ""),
-        json.dumps(
+        "timestamp": r.get("timestamp") or datetime.now(timezone.utc).isoformat(),
+        "source": r.get("source", "single"),
+        "target": r.get("target", ""),
+        "preset": r.get("preset", ""),
+        "strictness": r.get("strictness", ""),
+        "custom_focus": r.get("custom_focus", ""),
+        "llm_provider": r.get("llm_provider", ""),
+        "llm_fallback_reason": r.get("llm_fallback_reason", ""),
+        "overall_score": _coerce_int(r.get("overall_score")),
+        "summary": r.get("summary", ""),
+        "scores_json": json.dumps(r.get("scores", {}) or {}, ensure_ascii=False),
+        "strengths": r.get("strengths", ""),
+        "what_was_lacking": r.get("what_was_lacking", ""),
+        "recommendations_json": json.dumps(
             r.get("improvement_recommendations", []) or [], ensure_ascii=False
         ),
-        r.get("transcript", ""),
-    )
+        "transcript": r.get("transcript", ""),
+    }
 
 
 def record_audit(target: str, evaluation: dict, source: str = "single") -> None:
-    """Insert one audit row into SQLite. Thread-safe. Never raises — a failed
-    history write must never break an audit."""
+    """Insert one audit row. Thread-safe; never raises."""
     try:
         _ensure_db()
         record = dict(evaluation)
@@ -192,11 +230,11 @@ def record_audit(target: str, evaluation: dict, source: str = "single") -> None:
             + uuid.uuid4().hex[:6]
         )
         record["timestamp"] = datetime.now(timezone.utc).isoformat()
-        with _connect() as conn:
-            conn.execute(
-                "INSERT INTO audits VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                _record_to_row(record),
-            )
+        sql = text(
+            f"INSERT INTO audits ({_INSERT_COLS}) VALUES ({_INSERT_PARAMS})"
+        )
+        with _get_engine().begin() as conn:
+            conn.execute(sql, _record_to_dict(record))
     except Exception:
         pass
 
@@ -204,19 +242,19 @@ def record_audit(target: str, evaluation: dict, source: str = "single") -> None:
 def _build_filter_clause(
     search: str, preset: str, provider: str, min_score: int
 ) -> tuple:
-    where, params = [], []
+    where, params = [], {}
     if search:
-        where.append("target LIKE ?")
-        params.append(f"%{search}%")
+        where.append("target LIKE :search")
+        params["search"] = f"%{search}%"
     if preset:
-        where.append("preset = ?")
-        params.append(preset)
+        where.append("preset = :preset")
+        params["preset"] = preset
     if provider:
-        where.append("llm_provider = ?")
-        params.append(provider)
+        where.append("llm_provider = :provider")
+        params["provider"] = provider
     if min_score and min_score > 0:
-        where.append("overall_score >= ?")
-        params.append(min_score)
+        where.append("overall_score >= :min_score")
+        params["min_score"] = min_score
     clause = (" WHERE " + " AND ".join(where)) if where else ""
     return clause, params
 
@@ -229,25 +267,24 @@ def load_history(
     provider: str = "",
     min_score: int = 0,
 ) -> list:
-    """Newest-first audits matching the supplied filters, capped at `limit`.
-    Filters are pushed down to SQL — this stays fast even with 100k rows."""
+    """Newest-first audits matching the supplied filters, capped at `limit`."""
     try:
         _ensure_db()
     except Exception:
         return []
     clause, params = _build_filter_clause(search, preset, provider, min_score)
-    sql = (
+    params["limit"] = limit
+    sql = text(
         "SELECT id, timestamp, source, target, preset, strictness, "
         "custom_focus, llm_provider, llm_fallback_reason, overall_score, "
         "summary, scores_json, strengths, what_was_lacking, "
         "recommendations_json, transcript FROM audits"
-        f"{clause} ORDER BY timestamp DESC LIMIT ?"
+        f"{clause} ORDER BY timestamp DESC LIMIT :limit"
     )
     try:
-        with _connect() as conn:
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(sql, (*params, limit)).fetchall()
-    except sqlite3.Error:
+        with _get_engine().connect() as conn:
+            rows = conn.execute(sql, params).mappings().all()
+    except SQLAlchemyError:
         return []
     out = []
     for row in rows:
@@ -269,61 +306,58 @@ def load_history(
 def history_stats(
     *, search: str = "", preset: str = "", provider: str = "", min_score: int = 0
 ) -> dict:
-    """Aggregate counts/avg pushed down to SQL (so they stay accurate even
-    when the displayed list is truncated by `limit`)."""
+    """Aggregate counts/avg pushed down to SQL."""
     try:
         _ensure_db()
     except Exception:
         return {"total": 0, "matching": 0, "avg_score": None}
     clause, params = _build_filter_clause(search, preset, provider, min_score)
     try:
-        with _connect() as conn:
-            total = conn.execute("SELECT COUNT(*) FROM audits").fetchone()[0]
+        with _get_engine().connect() as conn:
+            total = conn.execute(text("SELECT COUNT(*) FROM audits")).scalar() or 0
             matching = conn.execute(
-                f"SELECT COUNT(*) FROM audits{clause}", params
-            ).fetchone()[0]
+                text(f"SELECT COUNT(*) FROM audits{clause}"), params
+            ).scalar() or 0
             if clause:
-                avg_sql = (
+                avg_sql = text(
                     f"SELECT AVG(overall_score) FROM audits{clause} "
-                    f"AND overall_score IS NOT NULL"
+                    "AND overall_score IS NOT NULL"
                 )
             else:
-                avg_sql = (
+                avg_sql = text(
                     "SELECT AVG(overall_score) FROM audits "
                     "WHERE overall_score IS NOT NULL"
                 )
-            avg_row = conn.execute(avg_sql, params).fetchone()
-            avg = avg_row[0] if avg_row and avg_row[0] is not None else None
-    except sqlite3.Error:
+            avg = conn.execute(avg_sql, params).scalar()
+    except SQLAlchemyError:
         return {"total": 0, "matching": 0, "avg_score": None}
     return {"total": total, "matching": matching, "avg_score": avg}
 
 
 def history_distinct(field: str) -> list:
-    """Distinct non-empty values of `field` from history. Used for filter
-    dropdowns. Restricted to a whitelist to prevent SQL injection."""
+    """Distinct non-empty values of `field`. Whitelist guards SQL injection."""
     if field not in ("preset", "llm_provider", "source", "strictness"):
         return []
     try:
         _ensure_db()
-        with _connect() as conn:
-            rows = conn.execute(
+        with _get_engine().connect() as conn:
+            rows = conn.execute(text(
                 f"SELECT DISTINCT {field} FROM audits "
                 f"WHERE {field} IS NOT NULL AND {field} != '' ORDER BY {field}"
-            ).fetchall()
+            )).all()
         return [r[0] for r in rows]
-    except sqlite3.Error:
+    except SQLAlchemyError:
         return []
 
 
 def clear_history() -> bool:
-    """Delete every row from the audits table. The DB file itself stays."""
+    """Delete every row from the audits table."""
     try:
         _ensure_db()
-        with _connect() as conn:
-            conn.execute("DELETE FROM audits")
+        with _get_engine().begin() as conn:
+            conn.execute(text("DELETE FROM audits"))
         return True
-    except sqlite3.Error:
+    except SQLAlchemyError:
         return False
 
 
