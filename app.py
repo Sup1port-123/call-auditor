@@ -37,6 +37,17 @@ from rubric import AUDIT_PRESETS, RUBRIC_DIMENSIONS
 
 load_dotenv(override=True)
 
+# Bridge Streamlit Cloud secrets → os.environ. The rest of the app reads
+# API keys via os.getenv(); Streamlit Cloud only exposes them via st.secrets,
+# so without this they show as "not set". No-op locally when secrets.toml
+# is absent. setdefault() means a real .env entry still wins over a secret.
+try:
+    for _k, _v in st.secrets.items():
+        if isinstance(_v, str):
+            os.environ.setdefault(_k, _v)
+except (FileNotFoundError, AttributeError):
+    pass
+
 _OTIS_FAVICON = Path(__file__).parent / "assets" / "otis-favicon.svg"
 _OTIS_FULL = Path(__file__).parent / "assets" / "otis.svg"
 
