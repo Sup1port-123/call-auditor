@@ -1,0 +1,22 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Otis favicon">
+  <defs>
+    <linearGradient id="favG" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#a855f7"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+  </defs>
+  <circle cx="50" cy="50" r="46" fill="url(#favG)"/>
+  <ellipse cx="50" cy="56" rx="30" ry="28" fill="#fef9c3"/>
+  <ellipse cx="40" cy="50" rx="4.5" ry="6" fill="#1f1233"/>
+  <ellipse cx="60" cy="50" rx="4.5" ry="6" fill="#1f1233"/>
+  <circle cx="42" cy="48" r="1.5" fill="#ffffff"/>
+  <circle cx="62" cy="48" r="1.5" fill="#ffffff"/>
+  <path d="M 50 60 Q 46 65, 50 68 Q 54 65, 50 60 Z" fill="#ec4899"/>
+  <path d="M 50 68 Q 46 72, 43 70" stroke="#1f1233" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+  <path d="M 50 68 Q 54 72, 57 70" stroke="#1f1233" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+  <path d="M 18 35 Q 50 6, 82 35" stroke="#1f1233" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <ellipse cx="16" cy="46" rx="9" ry="12" fill="#1f1233"/>
+  <ellipse cx="84" cy="46" rx="9" ry="12" fill="#1f1233"/>
+  <ellipse cx="16" cy="46" rx="4.5" ry="7.5" fill="#ec4899"/>
+  <ellipse cx="84" cy="46" rx="4.5" ry="7.5" fill="#06b6d4"/>
+</svg>
