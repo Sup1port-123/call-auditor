@@ -59,6 +59,54 @@ st.set_page_config(
 )
 
 
+def _maybe_render_diag() -> None:
+    """Hidden diagnostic page. Append `?diag=1` to the URL to see DB state
+    and which secret keys the app can see. Renders nothing otherwise."""
+    if st.query_params.get("diag") != "1":
+        return
+    st.title("Otis · diagnostic")
+    st.write("Append `?diag=1` shows this page; without it, nothing is rendered.")
+
+    backend = "unknown"
+    rows = None
+    error = None
+    try:
+        from sqlalchemy import text as _text  # noqa: WPS433
+        backend = _get_engine().url.get_backend_name()
+        _ensure_db()
+        with _get_engine().connect() as conn:
+            rows = conn.execute(_text("SELECT COUNT(*) FROM audits")).scalar()
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+
+    st.subheader("Database")
+    st.json({"backend": backend, "rows": rows, "error": error})
+
+    st.subheader("Visible env / secret keys (names only)")
+    keys_we_care_about = [
+        "DATABASE_URL",
+        "ANTHROPIC_API_KEY",
+        "GOOGLE_API_KEY",
+        "ASSEMBLYAI_API_KEY",
+        "OLLAMA_DISABLED",
+        "TRANSCRIBER",
+        "LLM_PROVIDER",
+    ]
+    presence = {}
+    for k in keys_we_care_about:
+        v = os.getenv(k, "")
+        if v:
+            # Show only the first 8 chars so the secret never lands on screen.
+            presence[k] = f"set (prefix: {v[:8]}…, len {len(v)})"
+        else:
+            presence[k] = "MISSING"
+    st.json(presence)
+    st.stop()
+
+
+_maybe_render_diag()
+
+
 def _otis_svg_inline() -> str:
     """Read the full Otis SVG once and return inline HTML."""
     try:
