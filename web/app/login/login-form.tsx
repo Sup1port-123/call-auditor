@@ -13,17 +13,6 @@ export default function LoginForm() {
   const [sentTo, setSentTo] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function signInWithGoogle() {
-    const supabase = createClient();
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
-      },
-    });
-    if (error) setError(error.message);
-  }
-
   async function signInWithEmail(e: React.FormEvent) {
     e.preventDefault();
     setSending(true);
@@ -46,21 +35,8 @@ export default function LoginForm() {
         <div className="text-center">
           <h1 className="text-3xl font-semibold">Sign in to Otis</h1>
           <p className="text-zinc-400 mt-2 text-sm">
-            Continue with Google or a magic link.
+            We&apos;ll email you a one-tap sign-in link.
           </p>
-        </div>
-
-        <button
-          onClick={signInWithGoogle}
-          className="w-full rounded-md border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 py-2.5 text-sm font-medium transition"
-        >
-          Continue with Google
-        </button>
-
-        <div className="flex items-center gap-3 text-xs uppercase tracking-widest text-zinc-500">
-          <div className="h-px flex-1 bg-zinc-800" />
-          or
-          <div className="h-px flex-1 bg-zinc-800" />
         </div>
 
         {sentTo ? (
