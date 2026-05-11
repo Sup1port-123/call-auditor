@@ -19,7 +19,7 @@ export default function LandingPage() {
         &mdash; or fumbled.
       </p>
       <Link
-        href="/login"
+        href="/dashboard"
         className="mt-10 inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-500 px-8 py-3 text-base font-medium hover:opacity-90 transition"
       >
         Let&apos;s find out &rarr;

@@ -1,15 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
-import { redirect } from "next/navigation";
-import LogoutButton from "./logout-button";
-
-export default async function DashboardPage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect("/login");
-  }
-
+export default function DashboardPage() {
   return (
     <main className="min-h-screen bg-[radial-gradient(ellipse_at_top,_#1a0b2e_0%,_#0a0612_60%)] text-white">
       <header className="border-b border-zinc-800/80 px-8 py-4 flex items-center justify-between">
@@ -17,14 +6,10 @@ export default async function DashboardPage() {
           <span className="font-semibold tracking-tight">Otis</span>
           <span className="text-xs text-zinc-500">dashboard</span>
         </div>
-        <div className="flex items-center gap-4 text-sm">
-          <span className="text-zinc-400">{user.email}</span>
-          <LogoutButton />
-        </div>
       </header>
 
       <section className="px-8 py-16 max-w-5xl mx-auto">
-        <h1 className="text-3xl font-semibold">Welcome back.</h1>
+        <h1 className="text-3xl font-semibold">Welcome.</h1>
         <p className="text-zinc-400 mt-2">
           This is the new Otis dashboard shell. Real content lands in phase 2.
         </p>
