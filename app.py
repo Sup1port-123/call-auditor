@@ -62,9 +62,12 @@ st.set_page_config(
 
 
 def _otis_svg_inline() -> str:
-    """Read the full Otis SVG once and return inline HTML."""
+    """Read the full Otis SVG and return it as a single line. Streamlit's
+    markdown parser treats indented multi-line strings as fenced code blocks,
+    so newlines + leading whitespace must be flattened before inlining."""
     try:
-        return _OTIS_FULL.read_text(encoding="utf-8")
+        raw = _OTIS_FULL.read_text(encoding="utf-8")
+        return " ".join(line.strip() for line in raw.splitlines() if line.strip())
     except Exception:
         return "🦦"
 
