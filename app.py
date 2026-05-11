@@ -372,6 +372,24 @@ def clear_history() -> bool:
         return False
 
 
+def db_status() -> dict:
+    """Sidebar diagnostic. Says which backend is in use and whether the
+    schema-init path succeeds. Returns a dict for the sidebar to render."""
+    backend = "unknown"
+    connected = False
+    error = None
+    rows = None
+    try:
+        backend = _get_engine().url.get_backend_name()
+        _ensure_db()
+        with _get_engine().connect() as conn:
+            rows = conn.execute(text("SELECT COUNT(*) FROM audits")).scalar()
+        connected = True
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"[:200]
+    return {"backend": backend, "connected": connected, "error": error, "rows": rows}
+
+
 # ---------- styling ----------
 
 
@@ -2091,6 +2109,17 @@ with st.sidebar:
         f"(active). Fallback chain: Gemini → Claude → Ollama (local). "
         f"Override the primary with `LLM_PROVIDER=...` in `.env`."
     )
+
+    _dbs = db_status()
+    if _dbs["connected"] and _dbs["backend"] == "postgresql":
+        st.success(f"DB: postgresql · {_dbs['rows']} audits stored")
+    elif _dbs["connected"] and _dbs["backend"] == "sqlite":
+        st.warning(
+            "DB: sqlite (ephemeral). DATABASE_URL is not set — audit history "
+            "won't survive a Streamlit Cloud restart. Add it to Secrets."
+        )
+    else:
+        st.error(f"DB: {_dbs['backend']} · not connected · {_dbs['error']}")
 
     st.divider()
 
