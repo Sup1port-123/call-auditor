@@ -153,11 +153,23 @@ def _ensure_db() -> None:
         if _db_initialized:
             return
         engine = _get_engine()
-        with engine.begin() as conn:
-            for stmt in _AUDITS_SCHEMA_STMTS:
-                conn.execute(text(stmt))
-            if _is_sqlite():
-                conn.exec_driver_sql("PRAGMA journal_mode = WAL;")
+        try:
+            with engine.begin() as conn:
+                for stmt in _AUDITS_SCHEMA_STMTS:
+                    conn.execute(text(stmt))
+                if _is_sqlite():
+                    conn.exec_driver_sql("PRAGMA journal_mode = WAL;")
+            print(
+                f"[otis] DB ready · backend={engine.url.get_backend_name()}",
+                flush=True,
+            )
+        except Exception as exc:
+            print(
+                f"[otis] DB init FAILED · backend={engine.url.get_backend_name()} "
+                f"· {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+            raise
         _migrate_legacy_jsonl()
         _db_initialized = True
 
@@ -246,8 +258,11 @@ def record_audit(target: str, evaluation: dict, source: str = "single") -> None:
         )
         with _get_engine().begin() as conn:
             conn.execute(sql, _record_to_dict(record))
-    except Exception:
-        pass
+    except Exception as exc:
+        print(
+            f"[otis] record_audit DROPPED · {type(exc).__name__}: {exc}",
+            flush=True,
+        )
 
 
 def _build_filter_clause(
@@ -370,24 +385,6 @@ def clear_history() -> bool:
         return True
     except SQLAlchemyError:
         return False
-
-
-def db_status() -> dict:
-    """Sidebar diagnostic. Says which backend is in use and whether the
-    schema-init path succeeds. Returns a dict for the sidebar to render."""
-    backend = "unknown"
-    connected = False
-    error = None
-    rows = None
-    try:
-        backend = _get_engine().url.get_backend_name()
-        _ensure_db()
-        with _get_engine().connect() as conn:
-            rows = conn.execute(text("SELECT COUNT(*) FROM audits")).scalar()
-        connected = True
-    except Exception as exc:
-        error = f"{type(exc).__name__}: {exc}"[:200]
-    return {"backend": backend, "connected": connected, "error": error, "rows": rows}
 
 
 # ---------- styling ----------
@@ -2110,16 +2107,6 @@ with st.sidebar:
         f"Override the primary with `LLM_PROVIDER=...` in `.env`."
     )
 
-    _dbs = db_status()
-    if _dbs["connected"] and _dbs["backend"] == "postgresql":
-        st.success(f"DB: postgresql · {_dbs['rows']} audits stored")
-    elif _dbs["connected"] and _dbs["backend"] == "sqlite":
-        st.warning(
-            "DB: sqlite (ephemeral). DATABASE_URL is not set — audit history "
-            "won't survive a Streamlit Cloud restart. Add it to Secrets."
-        )
-    else:
-        st.error(f"DB: {_dbs['backend']} · not connected · {_dbs['error']}")
 
     st.divider()
 
