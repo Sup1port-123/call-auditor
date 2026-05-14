@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { motion } from "motion/react";
-import LottiePlayer from "@/components/lottie-player";
 import TypedText from "@/components/typed-text";
 
 export default function LandingPage() {
@@ -28,23 +28,28 @@ export default function LandingPage() {
       <section className="relative z-10 px-6 md:px-12 pt-8 md:pt-16 pb-32 max-w-7xl mx-auto">
         <div className="grid grid-cols-1 md:grid-cols-[1fr_1.1fr] gap-8 md:gap-16 items-center">
           <motion.div
-            initial={{ opacity: 0, scale: 0.85, rotate: -4 }}
+            initial={{ opacity: 0, scale: 0.85, rotate: -3 }}
             animate={{ opacity: 1, scale: 1, rotate: 0 }}
-            transition={{ duration: 1, ease: [0.22, 1, 0.36, 1] }}
+            transition={{ duration: 1.2, ease: [0.22, 1, 0.36, 1] }}
+            whileHover={{ scale: 1.02 }}
             className="relative"
           >
-            <div className="float-y aspect-square max-w-[460px] mx-auto md:mx-0">
-              <LottiePlayer
-                src="/lottie/hey.lottie"
-                className="w-full h-full"
+            <div className="float-y relative max-w-[520px] mx-auto md:mx-0 aspect-[3/4] character-glow">
+              <Image
+                src="/otis-character.png"
+                alt="Otis, your AI call auditor"
+                fill
+                priority
+                sizes="(max-width: 768px) 100vw, 520px"
+                className="object-contain character-mask"
               />
             </div>
 
             <motion.div
-              initial={{ opacity: 0, y: -6 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.4 }}
-              className="absolute top-8 right-6 md:right-0 bg-white rounded-2xl shadow-[0_8px_30px_rgba(15,23,42,0.08)] px-4 py-2.5 text-xs font-medium text-slate-700 speech"
+              initial={{ opacity: 0, y: -6, scale: 0.85 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              transition={{ duration: 0.5, delay: 1.2, ease: [0.22, 1, 0.36, 1] }}
+              className="absolute top-12 right-2 md:-right-4 bg-white rounded-2xl shadow-[0_12px_40px_-8px_rgba(15,23,42,0.18)] px-4 py-2.5 text-sm font-medium text-slate-800 speech"
             >
               Hey, I&apos;m Otis 👋
             </motion.div>

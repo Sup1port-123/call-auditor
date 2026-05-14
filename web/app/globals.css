@@ -85,6 +85,25 @@ body {
   animation: float-y 6s ease-in-out infinite;
 }
 
+/* radial fade so the character's bg blends into the sky */
+.character-mask {
+  -webkit-mask-image: radial-gradient(
+    ellipse 75% 80% at 50% 48%,
+    black 55%,
+    transparent 95%
+  );
+  mask-image: radial-gradient(
+    ellipse 75% 80% at 50% 48%,
+    black 55%,
+    transparent 95%
+  );
+}
+
+.character-glow {
+  filter: drop-shadow(0 25px 50px rgba(56, 142, 215, 0.25))
+    drop-shadow(0 10px 20px rgba(255, 255, 255, 0.4));
+}
+
 /* ============================ APP THEME ============================ */
 /* Aurora background used on /dashboard, /audits, etc. */
 
