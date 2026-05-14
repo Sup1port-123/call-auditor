@@ -4,6 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { motion } from "motion/react";
 import TypedText from "@/components/typed-text";
+import CoviPill from "@/components/covi-pill";
 
 export default function LandingPage() {
   return (
@@ -34,6 +35,16 @@ export default function LandingPage() {
             whileHover={{ scale: 1.02 }}
             className="relative"
           >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.92 }}
+              animate={{ opacity: 0.18, scale: 1 }}
+              transition={{ duration: 1.4, delay: 0.1 }}
+              aria-hidden
+              className="font-display absolute -top-8 md:-top-16 -left-4 md:-left-12 right-0 text-[28vw] md:text-[18rem] leading-[0.85] font-black text-white tracking-tight pointer-events-none select-none"
+            >
+              OTIS
+            </motion.div>
+
             <div className="float-y relative max-w-[520px] mx-auto md:mx-0 aspect-[3/4] character-glow">
               <Image
                 src="/otis-character.png"
@@ -45,11 +56,28 @@ export default function LandingPage() {
               />
             </div>
 
+            <CoviPill
+              label="Listen"
+              tone="sky"
+              delay={1.0}
+              driftFromX={-30}
+              driftFromY={-10}
+              className="absolute top-[18%] -left-2 md:-left-6 z-10"
+            />
+            <CoviPill
+              label="Score"
+              tone="violet"
+              delay={1.4}
+              driftFromX={30}
+              driftFromY={10}
+              className="absolute bottom-[16%] -right-2 md:-right-4 z-10"
+            />
+
             <motion.div
               initial={{ opacity: 0, y: -6, scale: 0.85 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              transition={{ duration: 0.5, delay: 1.2, ease: [0.22, 1, 0.36, 1] }}
-              className="absolute top-12 right-2 md:-right-4 bg-white rounded-2xl shadow-[0_12px_40px_-8px_rgba(15,23,42,0.18)] px-4 py-2.5 text-sm font-medium text-slate-800 speech"
+              transition={{ duration: 0.5, delay: 1.8, ease: [0.22, 1, 0.36, 1] }}
+              className="absolute top-[6%] right-[8%] bg-white rounded-2xl shadow-[0_12px_40px_-8px_rgba(15,23,42,0.18)] px-4 py-2.5 text-sm font-medium text-slate-800 speech z-10"
             >
               Hey, I&apos;m Otis 👋
             </motion.div>

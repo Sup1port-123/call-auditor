@@ -30,21 +30,25 @@ export default async function AuditsPage({
   const { data: audits, error } = await query;
 
   return (
-    <div className="px-10 py-12 max-w-6xl">
-      <div className="flex items-end justify-between mb-8">
+    <div className="px-10 lg:px-16 py-14 max-w-6xl">
+      <div className="flex items-end justify-between mb-10">
         <div>
-          <h1 className="text-3xl font-semibold">
-            <span className="bg-gradient-to-r from-white to-zinc-400 bg-clip-text text-transparent">
-              Audits
+          <div className="text-xs uppercase tracking-[0.25em] text-[var(--sky-700)] font-semibold mb-3">
+            Audits
+          </div>
+          <h1 className="font-display text-5xl md:text-6xl font-extrabold tracking-tight leading-[1.02]">
+            Every call,{" "}
+            <span className="bg-gradient-to-r from-[var(--sky-700)] via-[var(--violet-500)] to-[var(--pink-500)] bg-clip-text text-transparent">
+              scored.
             </span>
           </h1>
-          <p className="text-zinc-400 mt-1 text-sm">
-            Every call Otis has scored. Newest first.
+          <p className="text-zinc-500 mt-3 max-w-xl">
+            Newest first. Click any row to open the full evaluation.
           </p>
         </div>
         <Link
           href="/new-audit"
-          className="rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-500 px-5 py-2 text-sm font-medium hover:opacity-90 hover:scale-[1.02] transition shadow-[0_0_30px_-12px_rgba(232,121,249,0.6)]"
+          className="rounded-full bg-[var(--ink)] text-white px-6 py-2.5 text-sm font-medium hover:bg-zinc-800 transition shadow-[0_8px_24px_-12px_rgba(15,23,42,0.4)]"
         >
           + New audit
         </Link>
@@ -56,12 +60,12 @@ export default async function AuditsPage({
           type="search"
           defaultValue={q ?? ""}
           placeholder="Search recording filename or URL…"
-          className="w-full rounded-md bg-zinc-900/60 backdrop-blur-md border border-white/10 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-fuchsia-500"
+          className="w-full rounded-2xl bg-[var(--paper)] border border-transparent focus:border-[var(--sky-500)] focus:bg-white px-5 py-3 text-sm focus:outline-none transition"
         />
       </form>
 
       {error && (
-        <div className="rounded-md border border-rose-500/40 bg-rose-500/10 text-rose-200 text-sm px-4 py-3 mb-6">
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 text-rose-700 text-sm px-5 py-3 mb-6">
           Couldn&apos;t load audits: {error.message}
         </div>
       )}
@@ -69,16 +73,16 @@ export default async function AuditsPage({
       {audits && audits.length > 0 ? (
         <AuditsTable rows={audits} />
       ) : (
-        <div className="rounded-2xl border border-dashed border-white/10 bg-zinc-900/20 backdrop-blur-md p-16 text-center">
-          <div className="text-zinc-400 text-sm">
+        <div className="rounded-3xl bg-[var(--paper)] p-16 text-center">
+          <div className="text-zinc-500 text-sm">
             {q ? `No audits matching "${q}".` : "No audits yet."}
           </div>
           {!q && (
             <Link
               href="/new-audit"
-              className="inline-block mt-4 text-sm text-fuchsia-300 hover:text-fuchsia-200 transition"
+              className="inline-block mt-5 rounded-full bg-[var(--ink)] text-white px-6 py-2.5 text-sm font-medium hover:bg-zinc-800 transition"
             >
-              Run your first one &rarr;
+              + Run your first one
             </Link>
           )}
         </div>

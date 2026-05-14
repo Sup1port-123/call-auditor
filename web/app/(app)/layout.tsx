@@ -1,6 +1,6 @@
 import Link from "next/link";
+import Image from "next/image";
 import type { ReactNode } from "react";
-import AuroraBackground from "@/components/aurora-background";
 
 const NAV = [
   { href: "/dashboard", label: "Dashboard" },
@@ -10,28 +10,48 @@ const NAV = [
 
 export default function AppLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="min-h-screen text-white relative">
-      <AuroraBackground />
-      <div className="grid grid-cols-[220px_1fr] min-h-screen">
-        <aside className="border-r border-white/5 px-4 py-6 flex flex-col gap-1 backdrop-blur-xl bg-black/20">
-          <Link href="/" className="px-3 py-2 mb-4 group">
-            <span className="font-semibold tracking-tight text-lg bg-gradient-to-r from-white to-zinc-400 bg-clip-text text-transparent group-hover:from-cyan-200 group-hover:to-fuchsia-300 transition-all duration-300">
-              Otis
-            </span>
-            <span className="text-xs text-zinc-500 block">AI call auditor</span>
+    <div className="min-h-screen bg-white text-[var(--ink)]">
+      <div className="grid grid-cols-[240px_1fr] min-h-screen">
+        <aside className="border-r border-zinc-100 px-5 py-7 flex flex-col gap-1 bg-white sticky top-0 h-screen">
+          <Link href="/" className="px-3 py-2 mb-5 flex items-center gap-3 group">
+            <div className="relative w-10 h-10 rounded-full overflow-hidden bg-gradient-to-br from-[var(--sky-200)] to-[var(--violet-200)] shrink-0">
+              <Image
+                src="/otis-character.png"
+                alt="Otis"
+                fill
+                sizes="40px"
+                className="object-cover object-top scale-150 translate-y-1"
+              />
+            </div>
+            <div className="flex flex-col">
+              <span className="font-display text-lg font-bold tracking-tight leading-none">
+                otis<span className="text-[var(--sky-500)]">.</span>
+              </span>
+              <span className="text-[10px] uppercase tracking-widest text-zinc-400 mt-1">
+                AI call auditor
+              </span>
+            </div>
           </Link>
+
+          <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-400 px-3 mt-3 mb-2">
+            Menu
+          </div>
           {NAV.map((item) => (
             <Link
               key={item.href}
               href={item.href}
-              className="px-3 py-2 rounded-md text-sm text-zinc-300 hover:bg-white/5 hover:text-white transition relative group"
+              className="px-3 py-2 rounded-lg text-sm text-zinc-700 hover:bg-zinc-100 hover:text-[var(--ink)] transition relative group"
             >
-              <span className="absolute inset-y-0 left-0 w-0.5 bg-gradient-to-b from-violet-400 to-fuchsia-400 rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
               {item.label}
             </Link>
           ))}
+
+          <div className="mt-auto px-3 py-3 rounded-2xl bg-[var(--paper)] text-xs text-zinc-500 leading-relaxed">
+            Drop a recording &mdash; I&apos;ll transcribe, score, and surface
+            what worked.
+          </div>
         </aside>
-        <main className="overflow-x-hidden">{children}</main>
+        <main className="overflow-x-hidden bg-white">{children}</main>
       </div>
     </div>
   );

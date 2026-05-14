@@ -38,14 +38,14 @@ export default async function AuditDetailPage({
 
   if (pending) {
     return (
-      <div className="px-10 py-12 max-w-3xl">
+      <div className="px-10 lg:px-16 py-14 max-w-3xl">
         <Link
           href="/audits"
-          className="text-xs text-zinc-500 hover:text-zinc-300 transition inline-block mb-6"
+          className="text-xs uppercase tracking-[0.25em] text-zinc-400 hover:text-zinc-600 transition inline-block mb-6"
         >
           &larr; All audits
         </Link>
-        <h1 className="text-2xl font-semibold break-all mb-8">
+        <h1 className="font-display text-3xl font-bold break-all mb-10">
           {audit.target}
         </h1>
         <AuditPoller
@@ -66,37 +66,61 @@ export default async function AuditDetailPage({
   const scores = parseScores(audit.scores_json);
   const recommendations = parseRecommendations(audit.recommendations_json);
 
+  let sectionIndex = 1;
+  const nextIndex = () => String(sectionIndex++).padStart(2, "0");
+
   return (
-    <div className="px-10 py-12 max-w-5xl">
+    <div className="px-10 lg:px-16 py-14 max-w-5xl">
       <Link
         href="/audits"
-        className="text-xs text-zinc-500 hover:text-zinc-300 transition inline-block mb-6"
+        className="text-xs uppercase tracking-[0.25em] text-zinc-400 hover:text-zinc-600 transition inline-block mb-6"
       >
         &larr; All audits
       </Link>
 
-      <div className="flex items-start justify-between gap-6 mb-2">
-        <h1 className="text-2xl font-semibold break-all bg-gradient-to-r from-white to-zinc-400 bg-clip-text text-transparent">
-          {audit.target}
-        </h1>
+      <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-8 items-end mb-12">
+        <div>
+          <div className="text-xs uppercase tracking-[0.25em] text-[var(--sky-700)] font-semibold mb-3">
+            Audit
+          </div>
+          <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight break-all leading-[1.05]">
+            {audit.target}
+          </h1>
+          <div className="flex flex-wrap items-center gap-2 mt-4 text-xs text-zinc-500">
+            <span className="rounded-full bg-[var(--paper)] px-3 py-1">
+              {new Date(audit.timestamp).toLocaleString()}
+            </span>
+            {audit.llm_provider && (
+              <span className="rounded-full bg-[var(--paper)] px-3 py-1">
+                {audit.llm_provider}
+              </span>
+            )}
+            {audit.preset && (
+              <span className="rounded-full bg-[var(--paper)] px-3 py-1">
+                preset: {audit.preset}
+              </span>
+            )}
+            {audit.strictness && (
+              <span className="rounded-full bg-[var(--paper)] px-3 py-1">
+                {audit.strictness}
+              </span>
+            )}
+          </div>
+        </div>
         <OverallScore score={audit.overall_score} />
-      </div>
-      <div className="text-xs text-zinc-500 mb-10">
-        {new Date(audit.timestamp).toLocaleString()}
-        {audit.llm_provider && <> &middot; scored by {audit.llm_provider}</>}
-        {audit.preset && <> &middot; preset: {audit.preset}</>}
-        {audit.strictness && <> &middot; strictness: {audit.strictness}</>}
       </div>
 
       {audit.summary && (
-        <Section title="Summary">
-          <p className="text-zinc-200 leading-relaxed">{audit.summary}</p>
+        <Section index={nextIndex()} title="Summary">
+          <p className="text-zinc-700 leading-relaxed text-[15px]">
+            {audit.summary}
+          </p>
         </Section>
       )}
 
       {Object.keys(scores).length > 0 && (
-        <Section title="Dimension scores">
-          <div className="space-y-3">
+        <Section index={nextIndex()} title="Dimensions">
+          <div className="space-y-5">
             {Object.entries(scores).map(([dim, val]) => (
               <DimensionRow key={dim} name={dim} value={val} />
             ))}
@@ -105,31 +129,30 @@ export default async function AuditDetailPage({
       )}
 
       {audit.strengths && (
-        <Section title="Strengths" tone="emerald">
-          <p className="text-zinc-200 leading-relaxed whitespace-pre-line">
+        <Section index={nextIndex()} title="Strengths" tone="emerald">
+          <p className="text-zinc-700 leading-relaxed whitespace-pre-line text-[15px]">
             {audit.strengths}
           </p>
         </Section>
       )}
 
       {audit.what_was_lacking && (
-        <Section title="What was lacking" tone="rose">
-          <p className="text-zinc-200 leading-relaxed whitespace-pre-line">
+        <Section index={nextIndex()} title="What was lacking" tone="rose">
+          <p className="text-zinc-700 leading-relaxed whitespace-pre-line text-[15px]">
             {audit.what_was_lacking}
           </p>
         </Section>
       )}
 
       {recommendations.length > 0 && (
-        <Section title="Recommendations">
-          <ul className="space-y-2">
+        <Section index={nextIndex()} title="Recommendations">
+          <ul className="space-y-3">
             {recommendations.map((r, i) => (
-              <li
-                key={i}
-                className="flex gap-3 text-zinc-200 leading-relaxed"
-              >
-                <span className="text-fuchsia-400 mt-1.5 shrink-0">●</span>
-                <span>{r}</span>
+              <li key={i} className="flex gap-3 text-zinc-700 leading-relaxed">
+                <span className="rounded-full w-6 h-6 shrink-0 bg-gradient-to-br from-[var(--violet-200)] to-[var(--pink-200)] text-zinc-700 text-xs font-bold flex items-center justify-center mt-0.5">
+                  {i + 1}
+                </span>
+                <span className="text-[15px]">{r}</span>
               </li>
             ))}
           </ul>
@@ -137,8 +160,8 @@ export default async function AuditDetailPage({
       )}
 
       {audit.transcript && (
-        <Section title="Transcript">
-          <pre className="text-zinc-300 text-sm leading-relaxed whitespace-pre-wrap font-sans">
+        <Section index={nextIndex()} title="Transcript">
+          <pre className="text-zinc-700 text-sm leading-relaxed whitespace-pre-wrap font-mono">
             {audit.transcript}
           </pre>
         </Section>
@@ -150,7 +173,7 @@ export default async function AuditDetailPage({
 function OverallScore({ score }: { score: number | null }) {
   if (score == null) {
     return (
-      <div className="text-xs text-zinc-500 whitespace-nowrap pt-2">
+      <div className="text-xs text-zinc-400 uppercase tracking-widest">
         unscored
       </div>
     );
@@ -160,42 +183,48 @@ function OverallScore({ score }: { score: number | null }) {
       ? "from-emerald-400 to-cyan-400"
       : score >= 5
       ? "from-amber-400 to-orange-400"
-      : "from-rose-400 to-fuchsia-400";
+      : "from-rose-400 to-pink-400";
   return (
-    <div className="text-right shrink-0 score-pulse rounded-2xl px-5 py-3">
+    <div className="text-right shrink-0">
+      <div className="text-xs uppercase tracking-[0.25em] text-zinc-500 mb-2">
+        Overall
+      </div>
       <div
-        className={`text-6xl font-bold tabular-nums bg-gradient-to-br ${tone} bg-clip-text text-transparent leading-none`}
+        className={`font-display text-[7rem] md:text-[8rem] font-black leading-none tabular-nums bg-gradient-to-br ${tone} bg-clip-text text-transparent`}
       >
         {score}
       </div>
-      <div className="text-xs text-zinc-500 mt-1">/ 10 overall</div>
+      <div className="text-xs text-zinc-500 mt-1 font-mono">/ 10</div>
     </div>
   );
 }
 
 function Section({
+  index,
   title,
   children,
   tone,
 }: {
+  index: string;
   title: string;
   children: React.ReactNode;
   tone?: "emerald" | "rose";
 }) {
   const accent =
     tone === "emerald"
-      ? "text-emerald-300"
+      ? "text-emerald-600"
       : tone === "rose"
-      ? "text-rose-300"
-      : "text-zinc-200";
+      ? "text-rose-600"
+      : "text-[var(--ink)]";
   return (
-    <section className="mb-10">
-      <h2
-        className={`text-xs uppercase tracking-widest mb-3 font-medium ${accent}`}
-      >
-        {title}
-      </h2>
-      <div className="rounded-2xl border border-white/10 bg-zinc-900/40 backdrop-blur-md p-6">
+    <section className="mb-6">
+      <div className="rounded-3xl bg-[var(--paper)] p-7 relative">
+        <span className="absolute top-5 right-6 font-mono text-xs text-zinc-400">
+          ({index})
+        </span>
+        <div className={`font-display text-xl font-bold mb-4 ${accent}`}>
+          {title}
+        </div>
         {children}
       </div>
     </section>
@@ -211,25 +240,32 @@ function DimensionRow({
 }) {
   const score = typeof value === "number" ? value : value.score;
   const rationale = typeof value === "number" ? null : value.rationale;
-  const pct = Math.max(0, Math.min(100, (score / 10) * 100));
+  const pct =
+    score == null ? 0 : Math.max(0, Math.min(100, (score / 10) * 100));
   const tone =
-    score >= 7
-      ? "bg-emerald-500"
+    score == null
+      ? "bg-zinc-300"
+      : score >= 7
+      ? "bg-gradient-to-r from-emerald-300 to-cyan-300"
       : score >= 5
-      ? "bg-amber-500"
-      : "bg-rose-500";
+      ? "bg-gradient-to-r from-amber-300 to-orange-300"
+      : "bg-gradient-to-r from-rose-300 to-pink-300";
 
   return (
     <div>
       <div className="flex items-center justify-between mb-1.5">
-        <div className="text-sm capitalize">{name.replace(/_/g, " ")}</div>
-        <div className="text-sm font-medium tabular-nums">{score}</div>
+        <div className="text-sm font-medium capitalize text-[var(--ink)]">
+          {name.replace(/_/g, " ")}
+        </div>
+        <div className="text-sm font-semibold tabular-nums text-zinc-700">
+          {score ?? "—"}
+        </div>
       </div>
-      <div className="h-2 rounded-full bg-zinc-800 overflow-hidden">
+      <div className="h-2 rounded-full bg-white overflow-hidden">
         <div className={`h-full ${tone}`} style={{ width: `${pct}%` }} />
       </div>
       {rationale && (
-        <p className="text-xs text-zinc-500 mt-1.5 leading-relaxed">
+        <p className="text-xs text-zinc-500 mt-2 leading-relaxed">
           {rationale}
         </p>
       )}

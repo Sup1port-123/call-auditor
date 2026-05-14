@@ -1,8 +1,22 @@
 @import "tailwindcss";
 
 :root {
-  --background: #0a0612;
-  --foreground: #f5f3ff;
+  --background: #ffffff;
+  --foreground: #0f0f12;
+
+  /* COVI palette */
+  --sky-100: #e8f4ff;
+  --sky-200: #c8e4ff;
+  --sky-500: #76bdf7;
+  --sky-700: #2f88e0;
+  --violet-200: #d8caff;
+  --violet-500: #a89cef;
+  --pink-200: #f8c8e7;
+  --pink-500: #e89cc9;
+  --ink: #0f0f12;
+  --ink-soft: #4a4a55;
+  --paper: #f5f5f7;
+  --paper-strong: #ececef;
 }
 
 @theme inline {

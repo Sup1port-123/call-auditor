@@ -53,7 +53,7 @@ export default function AuditPoller({
           router.refresh();
         }
       } catch {
-        // network blip — poll again
+        // network blip — try again next tick
       }
     }, 4000);
 
@@ -65,70 +65,71 @@ export default function AuditPoller({
   const copy = STATUS_COPY[status];
 
   return (
-    <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-12 flex flex-col items-center text-center">
+    <div className="rounded-3xl bg-[var(--paper)] p-12 flex flex-col items-center text-center">
       <LottiePlayer
         src="/lottie/interactive-volume.lottie"
         className="w-56 h-56"
       />
-      <div className="mt-4 text-xl font-medium">{copy.title}</div>
-      <div className="text-zinc-400 text-sm mt-1 max-w-md">{copy.sub}</div>
+      <div className="font-display text-2xl font-bold text-[var(--ink)] mt-2">
+        {copy.title}
+      </div>
+      <div className="text-zinc-500 text-sm mt-2 max-w-md">{copy.sub}</div>
 
       {status === "failed" && error && (
-        <div className="mt-6 rounded-md border border-rose-500/40 bg-rose-500/10 text-rose-200 text-sm px-4 py-3 max-w-xl text-left">
+        <div className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 text-rose-700 text-sm px-4 py-3 max-w-xl text-left">
           {error}
         </div>
       )}
 
-      <div className="mt-8 flex items-center gap-2 text-xs text-zinc-500">
-        <Pulse active={status === "transcribing"} />
-        <span
-          className={
-            status === "transcribing"
-              ? "text-zinc-200"
-              : status === "scoring" || status === "completed"
-              ? "text-emerald-400"
-              : ""
-          }
-        >
-          {status === "transcribing"
-            ? "Transcribing"
-            : status === "scoring" || status === "completed"
-            ? "✓ Transcribed"
-            : "Transcribe"}
-        </span>
-        <span className="text-zinc-700">→</span>
-        <Pulse active={status === "scoring"} />
-        <span
-          className={
-            status === "scoring"
-              ? "text-zinc-200"
-              : status === "completed"
-              ? "text-emerald-400"
-              : ""
-          }
-        >
-          {status === "scoring"
-            ? "Scoring"
-            : status === "completed"
-            ? "✓ Scored"
-            : "Score"}
-        </span>
+      <div className="mt-8 flex items-center gap-3 text-xs text-zinc-500">
+        <Step active={status === "transcribing"} done={status !== "transcribing"} label="Transcribe" />
+        <span className="text-zinc-300">→</span>
+        <Step
+          active={status === "scoring"}
+          done={status === "completed"}
+          label="Score"
+        />
       </div>
     </div>
   );
 }
 
-function Pulse({ active }: { active: boolean }) {
+function Step({
+  active,
+  done,
+  label,
+}: {
+  active: boolean;
+  done: boolean;
+  label: string;
+}) {
   return (
-    <span className="relative flex h-2 w-2">
-      {active && (
-        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-fuchsia-400 opacity-75" />
-      )}
+    <span className="flex items-center gap-2">
+      <span className="relative flex h-2 w-2">
+        {active && (
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--sky-500)] opacity-75" />
+        )}
+        <span
+          className={`relative inline-flex rounded-full h-2 w-2 ${
+            active
+              ? "bg-[var(--sky-500)]"
+              : done
+              ? "bg-emerald-500"
+              : "bg-zinc-300"
+          }`}
+        />
+      </span>
       <span
-        className={`relative inline-flex rounded-full h-2 w-2 ${
-          active ? "bg-fuchsia-500" : "bg-zinc-600"
-        }`}
-      />
+        className={
+          active
+            ? "text-[var(--ink)]"
+            : done
+            ? "text-emerald-600"
+            : "text-zinc-400"
+        }
+      >
+        {done && !active ? `✓ ${label}d` : label}
+      </span>
     </span>
   );
 }

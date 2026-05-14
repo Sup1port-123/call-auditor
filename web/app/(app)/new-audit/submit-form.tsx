@@ -40,24 +40,27 @@ export default function SubmitForm() {
 
   if (submitting) {
     return (
-      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-12 flex flex-col items-center text-center">
+      <div className="rounded-3xl bg-[var(--paper)] p-12 flex flex-col items-center text-center">
         <LottiePlayer
           src="/lottie/interactive-volume.lottie"
           className="w-48 h-48"
         />
-        <div className="mt-4 text-lg font-medium">Submitting to Otis…</div>
-        <div className="text-zinc-400 text-sm mt-1">
-          We&apos;ll send you to the audit page in a sec.
+        <div className="font-display text-xl font-bold mt-2">
+          Sending Otis on it…
+        </div>
+        <div className="text-zinc-500 text-sm mt-2">
+          We&apos;ll send you to the audit page in a second.
         </div>
       </div>
     );
   }
 
   return (
-    <form onSubmit={submit} className="space-y-6">
+    <form onSubmit={submit} className="space-y-7">
       <Field
+        index="01"
         label="Recording URL"
-        hint="A publicly accessible https URL pointing to an audio file (mp3/wav/m4a). For now we don't support direct uploads — host it somewhere first."
+        hint="A publicly accessible https URL pointing to an audio file (mp3/wav/m4a). Direct file uploads land in a later phase."
       >
         <input
           type="url"
@@ -65,16 +68,16 @@ export default function SubmitForm() {
           value={audioUrl}
           onChange={(e) => setAudioUrl(e.target.value)}
           placeholder="https://your-storage.example.com/call.mp3"
-          className="w-full rounded-md bg-zinc-900 border border-zinc-700 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-fuchsia-500"
+          className="w-full rounded-2xl bg-[var(--paper)] border border-transparent focus:border-[var(--sky-500)] focus:bg-white px-5 py-3 text-sm focus:outline-none transition"
         />
       </Field>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <Field label="Preset" hint="What kind of audit is this?">
+        <Field index="02" label="Preset" hint="What kind of audit is this?">
           <select
             value={preset}
             onChange={(e) => setPreset(e.target.value)}
-            className="w-full rounded-md bg-zinc-900 border border-zinc-700 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-fuchsia-500"
+            className="w-full rounded-2xl bg-[var(--paper)] border border-transparent focus:border-[var(--sky-500)] focus:bg-white px-4 py-3 text-sm focus:outline-none transition"
           >
             {Object.entries(AUDIT_PRESETS).map(([key, p]) => (
               <option key={key} value={key}>
@@ -82,16 +85,16 @@ export default function SubmitForm() {
               </option>
             ))}
           </select>
-          <p className="text-xs text-zinc-500 mt-1.5">
+          <p className="text-xs text-zinc-500 mt-2">
             {AUDIT_PRESETS[preset]?.description}
           </p>
         </Field>
 
-        <Field label="Strictness" hint="How tough should Otis be?">
+        <Field index="03" label="Strictness" hint="How tough should Otis be?">
           <select
             value={strictness}
             onChange={(e) => setStrictness(e.target.value)}
-            className="w-full rounded-md bg-zinc-900 border border-zinc-700 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-fuchsia-500"
+            className="w-full rounded-2xl bg-[var(--paper)] border border-transparent focus:border-[var(--sky-500)] focus:bg-white px-4 py-3 text-sm focus:outline-none transition"
           >
             {Object.keys(STRICTNESS_LEVELS).map((k) => (
               <option key={k} value={k}>
@@ -103,6 +106,7 @@ export default function SubmitForm() {
       </div>
 
       <Field
+        index="04"
         label="Custom focus (optional)"
         hint="Anything specific you want Otis to pay attention to."
       >
@@ -111,12 +115,12 @@ export default function SubmitForm() {
           onChange={(e) => setCustomFocus(e.target.value)}
           rows={3}
           placeholder="e.g. did the AI mention the 18% interest cap?"
-          className="w-full rounded-md bg-zinc-900 border border-zinc-700 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-fuchsia-500"
+          className="w-full rounded-2xl bg-[var(--paper)] border border-transparent focus:border-[var(--sky-500)] focus:bg-white px-5 py-3 text-sm focus:outline-none transition"
         />
       </Field>
 
       {error && (
-        <div className="rounded-md border border-rose-500/40 bg-rose-500/10 text-rose-200 text-sm px-4 py-3">
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 text-rose-700 text-sm px-5 py-3">
           {error}
         </div>
       )}
@@ -124,7 +128,7 @@ export default function SubmitForm() {
       <button
         type="submit"
         disabled={submitting}
-        className="w-full rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-500 py-3 text-sm font-medium hover:opacity-90 transition disabled:opacity-50"
+        className="w-full rounded-full bg-[var(--ink)] text-white py-3.5 text-sm font-medium hover:bg-zinc-800 transition disabled:opacity-50 shadow-[0_10px_30px_-12px_rgba(15,23,42,0.5)]"
       >
         Run audit
       </button>
@@ -133,19 +137,26 @@ export default function SubmitForm() {
 }
 
 function Field({
+  index,
   label,
   hint,
   children,
 }: {
+  index: string;
   label: string;
   hint?: string;
   children: React.ReactNode;
 }) {
   return (
     <div>
-      <label className="block text-sm font-medium mb-1.5">{label}</label>
+      <div className="flex items-baseline gap-2 mb-2">
+        <span className="font-mono text-xs text-zinc-400">({index})</span>
+        <label className="text-sm font-medium text-[var(--ink)]">
+          {label}
+        </label>
+      </div>
       {children}
-      {hint && <p className="text-xs text-zinc-500 mt-1.5">{hint}</p>}
+      {hint && <p className="text-xs text-zinc-500 mt-2">{hint}</p>}
     </div>
   );
 }
