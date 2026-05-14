@@ -76,7 +76,9 @@ export default async function AuditDetailPage({
       </Link>
 
       <div className="flex items-start justify-between gap-6 mb-2">
-        <h1 className="text-2xl font-semibold break-all">{audit.target}</h1>
+        <h1 className="text-2xl font-semibold break-all bg-gradient-to-r from-white to-zinc-400 bg-clip-text text-transparent">
+          {audit.target}
+        </h1>
         <OverallScore score={audit.overall_score} />
       </div>
       <div className="text-xs text-zinc-500 mb-10">
@@ -160,9 +162,9 @@ function OverallScore({ score }: { score: number | null }) {
       ? "from-amber-400 to-orange-400"
       : "from-rose-400 to-fuchsia-400";
   return (
-    <div className="text-right shrink-0">
+    <div className="text-right shrink-0 score-pulse rounded-2xl px-5 py-3">
       <div
-        className={`text-5xl font-bold tabular-nums bg-gradient-to-br ${tone} bg-clip-text text-transparent`}
+        className={`text-6xl font-bold tabular-nums bg-gradient-to-br ${tone} bg-clip-text text-transparent leading-none`}
       >
         {score}
       </div>
@@ -193,7 +195,7 @@ function Section({
       >
         {title}
       </h2>
-      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-6">
+      <div className="rounded-2xl border border-white/10 bg-zinc-900/40 backdrop-blur-md p-6">
         {children}
       </div>
     </section>

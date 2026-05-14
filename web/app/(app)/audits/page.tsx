@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import AuditsTable from "./audits-table";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -32,14 +33,18 @@ export default async function AuditsPage({
     <div className="px-10 py-12 max-w-6xl">
       <div className="flex items-end justify-between mb-8">
         <div>
-          <h1 className="text-3xl font-semibold">Audits</h1>
+          <h1 className="text-3xl font-semibold">
+            <span className="bg-gradient-to-r from-white to-zinc-400 bg-clip-text text-transparent">
+              Audits
+            </span>
+          </h1>
           <p className="text-zinc-400 mt-1 text-sm">
             Every call Otis has scored. Newest first.
           </p>
         </div>
         <Link
           href="/new-audit"
-          className="rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-500 px-5 py-2 text-sm font-medium hover:opacity-90 transition"
+          className="rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-500 px-5 py-2 text-sm font-medium hover:opacity-90 hover:scale-[1.02] transition shadow-[0_0_30px_-12px_rgba(232,121,249,0.6)]"
         >
           + New audit
         </Link>
@@ -51,7 +56,7 @@ export default async function AuditsPage({
           type="search"
           defaultValue={q ?? ""}
           placeholder="Search recording filename or URL…"
-          className="w-full rounded-md bg-zinc-900 border border-zinc-700 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-fuchsia-500"
+          className="w-full rounded-md bg-zinc-900/60 backdrop-blur-md border border-white/10 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-fuchsia-500"
         />
       </form>
 
@@ -62,68 +67,9 @@ export default async function AuditsPage({
       )}
 
       {audits && audits.length > 0 ? (
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-zinc-900/60 text-zinc-400">
-              <tr>
-                <Th>When</Th>
-                <Th>Target</Th>
-                <Th>Preset</Th>
-                <Th>LLM</Th>
-                <Th className="text-right pr-6">Score</Th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-800/80">
-              {audits.map((row) => (
-                <tr
-                  key={row.id}
-                  className="hover:bg-zinc-800/40 transition cursor-pointer"
-                >
-                  <Td className="text-zinc-400 whitespace-nowrap">
-                    <Link href={`/audits/${row.id}`} className="block">
-                      {new Date(row.timestamp).toLocaleDateString()}{" "}
-                      <span className="text-zinc-600">
-                        {new Date(row.timestamp).toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </span>
-                    </Link>
-                  </Td>
-                  <Td>
-                    <Link href={`/audits/${row.id}`} className="block">
-                      <div className="font-medium truncate max-w-xs">
-                        {row.target}
-                      </div>
-                      {row.summary && (
-                        <div className="text-zinc-500 text-xs truncate max-w-xs">
-                          {row.summary}
-                        </div>
-                      )}
-                    </Link>
-                  </Td>
-                  <Td className="text-zinc-400">
-                    <Link href={`/audits/${row.id}`} className="block">
-                      {row.preset || "—"}
-                    </Link>
-                  </Td>
-                  <Td className="text-zinc-400">
-                    <Link href={`/audits/${row.id}`} className="block">
-                      {row.llm_provider || "—"}
-                    </Link>
-                  </Td>
-                  <Td className="text-right pr-6">
-                    <Link href={`/audits/${row.id}`} className="block">
-                      <Score score={row.overall_score} />
-                    </Link>
-                  </Td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <AuditsTable rows={audits} />
       ) : (
-        <div className="rounded-2xl border border-dashed border-zinc-800 bg-zinc-900/20 p-16 text-center">
+        <div className="rounded-2xl border border-dashed border-white/10 bg-zinc-900/20 backdrop-blur-md p-16 text-center">
           <div className="text-zinc-400 text-sm">
             {q ? `No audits matching "${q}".` : "No audits yet."}
           </div>
@@ -138,44 +84,5 @@ export default async function AuditsPage({
         </div>
       )}
     </div>
-  );
-}
-
-function Th({
-  children,
-  className,
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <th
-      className={`text-left font-medium text-xs uppercase tracking-widest px-4 py-3 ${className ?? ""}`}
-    >
-      {children}
-    </th>
-  );
-}
-
-function Td({
-  children,
-  className,
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return <td className={`px-4 py-3 ${className ?? ""}`}>{children}</td>;
-}
-
-function Score({ score }: { score: number | null }) {
-  if (score == null) return <span className="text-xs text-zinc-500">—</span>;
-  const tone =
-    score >= 7
-      ? "text-emerald-300"
-      : score >= 5
-      ? "text-amber-300"
-      : "text-rose-300";
-  return (
-    <span className={`font-semibold tabular-nums ${tone}`}>{score}</span>
   );
 }
