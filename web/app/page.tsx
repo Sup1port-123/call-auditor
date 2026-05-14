@@ -45,16 +45,30 @@ export default function LandingPage() {
               OTIS
             </motion.div>
 
-            <div className="float-y relative max-w-[520px] mx-auto md:mx-0 aspect-[3/4] character-glow">
+            <motion.div
+              initial={{ rotate: 0, scale: 1 }}
+              animate={{
+                rotate: [-3, 3, -3],
+                scale: [1, 1.015, 1],
+                y: [0, -10, 0],
+              }}
+              transition={{
+                rotate: { duration: 7, repeat: Infinity, ease: "easeInOut" },
+                scale: { duration: 4, repeat: Infinity, ease: "easeInOut" },
+                y: { duration: 6, repeat: Infinity, ease: "easeInOut" },
+              }}
+              style={{ transformOrigin: "50% 85%" }}
+              className="relative max-w-[520px] mx-auto md:mx-0 aspect-[3/4]"
+            >
               <Image
-                src="/otis-character.png"
+                src="/otis-character-cutout.png"
                 alt="Otis, your AI call auditor"
                 fill
                 priority
                 sizes="(max-width: 768px) 100vw, 520px"
-                className="object-contain character-mask"
+                className="object-contain drop-shadow-[0_30px_50px_rgba(56,142,215,0.25)]"
               />
-            </div>
+            </motion.div>
 
             <CoviPill
               label="Listen"

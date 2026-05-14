@@ -16,11 +16,11 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           <Link href="/" className="px-3 py-2 mb-5 flex items-center gap-3 group">
             <div className="relative w-10 h-10 rounded-full overflow-hidden bg-gradient-to-br from-[var(--sky-200)] to-[var(--violet-200)] shrink-0">
               <Image
-                src="/otis-character.png"
+                src="/otis-character-cutout.png"
                 alt="Otis"
                 fill
                 sizes="40px"
-                className="object-cover object-top scale-150 translate-y-1"
+                className="object-cover object-top scale-[1.65] translate-y-0.5"
               />
             </div>
             <div className="flex flex-col">
