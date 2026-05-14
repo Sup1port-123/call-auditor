@@ -10,19 +10,84 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-display: var(--font-display);
 }
 
 html,
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica,
-    Arial, sans-serif;
+  font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont,
+    "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Aurora background blobs — slowly orbit, blurred. */
+/* ============================ SKY THEME ============================ */
+/* Used on /landing only — bright, airy, characterful. */
+
+.sky-bg {
+  background: linear-gradient(
+    180deg,
+    #b3e3ff 0%,
+    #cfeeff 35%,
+    #e8f7ff 70%,
+    #ffffff 100%
+  );
+  position: relative;
+  overflow: hidden;
+}
+
+.cloud {
+  position: absolute;
+  background:
+    radial-gradient(circle at 30% 50%, white 0%, transparent 60%),
+    radial-gradient(circle at 60% 40%, white 0%, transparent 55%),
+    radial-gradient(circle at 50% 60%, white 0%, transparent 50%);
+  filter: blur(2px);
+  opacity: 0.95;
+  pointer-events: none;
+}
+
+.cloud-a { width: 480px; height: 200px; top: 8vh;  left: -10vw; animation: drift 60s linear infinite; }
+.cloud-b { width: 360px; height: 160px; top: 40vh; right: -8vw; animation: drift-rev 70s linear infinite; }
+.cloud-c { width: 540px; height: 220px; top: 70vh; left: 20vw;  animation: drift 90s linear infinite; }
+.cloud-d { width: 300px; height: 140px; top: 22vh; right: 20vw; animation: drift-rev 55s linear infinite; }
+
+@keyframes drift {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(120vw); }
+}
+@keyframes drift-rev {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-120vw); }
+}
+
+/* speech bubble tail */
+.speech::after {
+  content: "";
+  position: absolute;
+  left: -14px;
+  top: 24px;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 12px 16px 12px 0;
+  border-color: transparent white transparent transparent;
+  filter: drop-shadow(-2px 1px 0 rgba(0, 0, 0, 0.04));
+}
+
+@keyframes float-y {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-12px); }
+}
+.float-y {
+  animation: float-y 6s ease-in-out infinite;
+}
+
+/* ============================ APP THEME ============================ */
+/* Aurora background used on /dashboard, /audits, etc. */
+
 .aurora-blob {
   position: absolute;
   width: 60vw;
@@ -33,21 +98,18 @@ body {
   mix-blend-mode: screen;
   will-change: transform;
 }
-
 .aurora-blob-violet {
   background: radial-gradient(circle, #8b5cf6 0%, transparent 60%);
   top: -25vw;
   left: -10vw;
   animation: aurora-drift-a 26s ease-in-out infinite;
 }
-
 .aurora-blob-cyan {
   background: radial-gradient(circle, #22d3ee 0%, transparent 60%);
   top: 30vh;
   right: -25vw;
   animation: aurora-drift-b 32s ease-in-out infinite;
 }
-
 .aurora-blob-fuchsia {
   background: radial-gradient(circle, #e879f9 0%, transparent 60%);
   bottom: -25vw;
@@ -55,22 +117,12 @@ body {
   animation: aurora-drift-c 28s ease-in-out infinite;
 }
 
-@keyframes aurora-drift-a {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  50% { transform: translate(8vw, 4vh) scale(1.1); }
-}
-@keyframes aurora-drift-b {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  50% { transform: translate(-6vw, -4vh) scale(0.95); }
-}
-@keyframes aurora-drift-c {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  50% { transform: translate(-4vw, -6vh) scale(1.05); }
-}
+@keyframes aurora-drift-a { 0%,100%{transform:translate(0,0) scale(1);} 50%{transform:translate(8vw,4vh) scale(1.1);} }
+@keyframes aurora-drift-b { 0%,100%{transform:translate(0,0) scale(1);} 50%{transform:translate(-6vw,-4vh) scale(0.95);} }
+@keyframes aurora-drift-c { 0%,100%{transform:translate(0,0) scale(1);} 50%{transform:translate(-4vw,-6vh) scale(1.05);} }
 
-/* Score-card glow */
 @keyframes score-pulse {
-  0%, 100% {
+  0%,100% {
     box-shadow:
       0 0 0 0 rgba(232, 121, 249, 0),
       0 0 80px -20px rgba(232, 121, 249, 0.35);
@@ -87,7 +139,9 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .aurora-blob,
-  .score-pulse {
+  .score-pulse,
+  .cloud,
+  .float-y {
     animation: none !important;
   }
 }
