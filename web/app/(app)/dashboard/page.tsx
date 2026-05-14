@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import LottiePlayer from "@/components/lottie-player";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -133,14 +134,25 @@ function ScorePill({ score }: { score: number | null }) {
 
 function EmptyState() {
   return (
-    <div className="rounded-2xl border border-dashed border-zinc-800 bg-zinc-900/20 p-12 text-center">
-      <div className="text-zinc-400 text-sm">No audits yet.</div>
-      <Link
-        href="/new-audit"
-        className="inline-block mt-4 text-sm text-fuchsia-300 hover:text-fuchsia-200 transition"
-      >
-        Run your first one &rarr;
-      </Link>
+    <div className="rounded-2xl border border-dashed border-zinc-800 bg-zinc-900/20 p-12 flex flex-col md:flex-row items-center gap-8">
+      <LottiePlayer
+        src="/lottie/hey.lottie"
+        className="w-40 h-40 shrink-0"
+      />
+      <div className="text-center md:text-left">
+        <div className="text-lg font-medium">Hi, I&apos;m Otis.</div>
+        <div className="text-zinc-400 text-sm mt-1 max-w-md">
+          Drop a recording URL and I&apos;ll transcribe it with speaker
+          diarization, score it against the rubric, and surface what your
+          AI agent nailed or fumbled.
+        </div>
+        <Link
+          href="/new-audit"
+          className="inline-flex items-center gap-2 mt-5 rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-500 px-5 py-2 text-sm font-medium hover:opacity-90 transition"
+        >
+          Run your first audit &rarr;
+        </Link>
+      </div>
     </div>
   );
 }

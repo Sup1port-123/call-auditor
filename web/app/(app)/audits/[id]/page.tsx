@@ -7,9 +7,15 @@ import {
   type Audit,
   type DimensionScore,
 } from "@/lib/types/audit";
+import AuditPoller from "./audit-poller";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+
+type AuditRow = Audit & {
+  status?: string;
+  error_message?: string | null;
+};
 
 export default async function AuditDetailPage({
   params,
@@ -22,10 +28,39 @@ export default async function AuditDetailPage({
     .from("audits")
     .select("*")
     .eq("id", id)
-    .maybeSingle<Audit>();
+    .maybeSingle<AuditRow>();
 
   if (error || !audit) {
     notFound();
+  }
+
+  const pending = audit.status && audit.status !== "completed";
+
+  if (pending) {
+    return (
+      <div className="px-10 py-12 max-w-3xl">
+        <Link
+          href="/audits"
+          className="text-xs text-zinc-500 hover:text-zinc-300 transition inline-block mb-6"
+        >
+          &larr; All audits
+        </Link>
+        <h1 className="text-2xl font-semibold break-all mb-8">
+          {audit.target}
+        </h1>
+        <AuditPoller
+          id={audit.id}
+          initialStatus={
+            (audit.status as
+              | "transcribing"
+              | "scoring"
+              | "completed"
+              | "failed") ?? "transcribing"
+          }
+          initialError={audit.error_message ?? null}
+        />
+      </div>
+    );
   }
 
   const scores = parseScores(audit.scores_json);
