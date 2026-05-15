@@ -1,33 +1,12 @@
 "use client";
 
-import { useEffect } from "react";
 import Link from "next/link";
-import Image from "next/image";
-import { motion, useMotionValue, useSpring } from "motion/react";
+import { motion } from "motion/react";
 import TypedText from "@/components/typed-text";
 import CoviPill from "@/components/covi-pill";
+import OtisBiped from "@/components/otis-biped";
 
 export default function LandingPage() {
-  // Cursor parallax — translate the character a few px toward the cursor.
-  // Spring smooths out raw mousemove jitter; values clamp to ±16px so the
-  // motion stays subtle and never fights the existing tilt/breath loops.
-  const mouseX = useMotionValue(0);
-  const mouseY = useMotionValue(0);
-  const parallaxX = useSpring(mouseX, { stiffness: 70, damping: 18, mass: 0.6 });
-  const parallaxY = useSpring(mouseY, { stiffness: 70, damping: 18, mass: 0.6 });
-
-  useEffect(() => {
-    const onMove = (e: MouseEvent) => {
-      const cx = window.innerWidth / 2;
-      const cy = window.innerHeight / 2;
-      const max = 16;
-      mouseX.set(((e.clientX - cx) / cx) * max);
-      mouseY.set(((e.clientY - cy) / cy) * max);
-    };
-    window.addEventListener("mousemove", onMove, { passive: true });
-    return () => window.removeEventListener("mousemove", onMove);
-  }, [mouseX, mouseY]);
-
   return (
     <main className="sky-bg min-h-screen relative">
       <div className="cloud cloud-a" />
@@ -67,33 +46,12 @@ export default function LandingPage() {
             </motion.div>
 
             <motion.div
-              style={{ x: parallaxX, y: parallaxY }}
-              className="relative"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 1, ease: [0.22, 1, 0.36, 1] }}
+              className="relative max-w-[560px] mx-auto md:mx-0 aspect-[3/4]"
             >
-              <motion.div
-                initial={{ rotate: 0, scale: 1 }}
-                animate={{
-                  rotate: [-3, 3, -3],
-                  scale: [1, 1.015, 1],
-                  y: [0, -10, 0],
-                }}
-                transition={{
-                  rotate: { duration: 7, repeat: Infinity, ease: "easeInOut" },
-                  scale: { duration: 4, repeat: Infinity, ease: "easeInOut" },
-                  y: { duration: 6, repeat: Infinity, ease: "easeInOut" },
-                }}
-                style={{ transformOrigin: "50% 85%" }}
-                className="relative max-w-[520px] mx-auto md:mx-0 aspect-[3/4]"
-              >
-                <Image
-                  src="/otis-character-cutout.png"
-                  alt="Otis, your AI call auditor"
-                  fill
-                  priority
-                  sizes="(max-width: 768px) 100vw, 520px"
-                  className="object-contain drop-shadow-[0_30px_50px_rgba(56,142,215,0.25)]"
-                />
-              </motion.div>
+              <OtisBiped className="w-full h-full" />
             </motion.div>
 
             <CoviPill
