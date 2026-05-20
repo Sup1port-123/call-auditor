@@ -30,7 +30,23 @@ export default function AgentForm() {
         form.set("pdf", pdfFile);
       }
       const res = await fetch("/api/agents", { method: "POST", body: form });
-      const data = await res.json();
+      const raw = await res.text();
+      let data: { id?: string; error?: string } = {};
+      if (raw) {
+        try {
+          data = JSON.parse(raw);
+        } catch {
+          throw new Error(
+            `Server returned a non-JSON response (${res.status}). ` +
+              (raw.slice(0, 200) || "Empty body — the function likely crashed."),
+          );
+        }
+      } else {
+        throw new Error(
+          `Server returned an empty ${res.status} response — the function ` +
+            "crashed. Check Vercel logs / env vars.",
+        );
+      }
       if (!res.ok) throw new Error(data.error || "Could not create agent");
       router.push(`/agents/${data.id}`);
     } catch (err) {
