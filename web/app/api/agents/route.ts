@@ -66,11 +66,18 @@ export async function POST(req: Request) {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error("[otis] admin client failed:", message);
+      // Surface exactly which SUPABASE-prefixed env keys the running
+      // function can actually see, so we stop guessing.
+      const visible =
+        Object.keys(process.env)
+          .filter((k) => k.includes("SUPABASE"))
+          .sort()
+          .join(", ") || "(none)";
       return NextResponse.json(
         {
           error:
-            "Server is missing SUPABASE_SERVICE_ROLE_KEY. Add it to the " +
-            "Vercel project's environment variables and redeploy.",
+            `${message}. After adding it in Vercel you MUST redeploy. ` +
+            `Env keys this deployment can see: ${visible}`,
         },
         { status: 500 },
       );
