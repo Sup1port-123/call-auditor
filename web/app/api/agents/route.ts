@@ -20,6 +20,16 @@ function sanitizeText(s: string): string {
   return out;
 }
 
+// Count chars Postgres text can't take, for diagnostics.
+function countBadChars(s: string): number {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 32 && c !== 9 && c !== 10 && c !== 13) n++;
+  }
+  return n;
+}
+
 export async function POST(req: Request) {
   // Whole handler wrapped so a crash still returns JSON, never an empty body.
   try {
@@ -74,7 +84,10 @@ export async function POST(req: Request) {
       knowledgeBase = String(form.get("kb_text") ?? "").trim();
     }
 
+    const badBefore = countBadChars(knowledgeBase);
     knowledgeBase = sanitizeText(knowledgeBase);
+    const badAfter = countBadChars(knowledgeBase);
+    const diag = `sanitizer v3 · bad chars ${badBefore}→${badAfter}`;
 
     let supabase;
     try {
@@ -112,7 +125,7 @@ export async function POST(req: Request) {
     if (error) {
       console.error("[otis] agent insert failed:", error.message);
       return NextResponse.json(
-        { error: `Could not save agent: ${error.message}` },
+        { error: `Could not save agent: ${error.message} [${diag}]` },
         { status: 500 },
       );
     }
