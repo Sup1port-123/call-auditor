@@ -6,6 +6,20 @@ import { newAgentId } from "@/lib/types/agent";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+// Postgres text columns reject the NUL byte (char code 0); PDF
+// extraction often emits it plus other C0 control chars. Drop every
+// control char below 32 except tab (9), LF (10) and CR (13).
+function sanitizeText(s: string): string {
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c >= 32 || c === 9 || c === 10 || c === 13) {
+      out += s[i];
+    }
+  }
+  return out;
+}
+
 export async function POST(req: Request) {
   // Whole handler wrapped so a crash still returns JSON, never an empty body.
   try {
@@ -19,8 +33,8 @@ export async function POST(req: Request) {
       );
     }
 
-    const name = String(form.get("name") ?? "").trim();
-    const target = String(form.get("target") ?? "").trim();
+    const name = sanitizeText(String(form.get("name") ?? "").trim());
+    const target = sanitizeText(String(form.get("target") ?? "").trim());
     const kbMode = String(form.get("kb_mode") ?? "text");
 
     if (!name) {
@@ -59,6 +73,8 @@ export async function POST(req: Request) {
     } else {
       knowledgeBase = String(form.get("kb_text") ?? "").trim();
     }
+
+    knowledgeBase = sanitizeText(knowledgeBase);
 
     let supabase;
     try {
