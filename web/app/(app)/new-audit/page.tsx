@@ -1,7 +1,22 @@
 import Link from "next/link";
+import { createClient } from "@/lib/supabase/server";
 import SubmitForm from "./submit-form";
 
-export default function NewAuditPage() {
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+export default async function NewAuditPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ agent?: string }>;
+}) {
+  const { agent } = await searchParams;
+  const supabase = await createClient();
+  const { data: agents } = await supabase
+    .from("agents")
+    .select("id, name")
+    .order("created_at", { ascending: false });
+
   return (
     <div className="px-10 lg:px-16 py-14 max-w-3xl">
       <Link
@@ -27,7 +42,7 @@ export default function NewAuditPage() {
         </p>
       </div>
 
-      <SubmitForm />
+      <SubmitForm agents={agents ?? []} defaultAgentId={agent ?? ""} />
     </div>
   );
 }

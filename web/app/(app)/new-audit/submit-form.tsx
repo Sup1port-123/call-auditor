@@ -5,9 +5,16 @@ import { useRouter } from "next/navigation";
 import LottiePlayer from "@/components/lottie-player";
 import { AUDIT_PRESETS, STRICTNESS_LEVELS } from "@/lib/rubric";
 
-export default function SubmitForm() {
+export default function SubmitForm({
+  agents,
+  defaultAgentId,
+}: {
+  agents: { id: string; name: string }[];
+  defaultAgentId: string;
+}) {
   const router = useRouter();
   const [audioUrl, setAudioUrl] = useState("");
+  const [agentId, setAgentId] = useState(defaultAgentId);
   const [preset, setPreset] = useState("general");
   const [strictness, setStrictness] = useState("standard");
   const [customFocus, setCustomFocus] = useState("");
@@ -24,6 +31,7 @@ export default function SubmitForm() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           audio_url: audioUrl,
+          agent_id: agentId || null,
           preset,
           strictness,
           custom_focus: customFocus,
@@ -72,8 +80,27 @@ export default function SubmitForm() {
         />
       </Field>
 
+      <Field
+        index="02"
+        label="Agent"
+        hint="Otis grades product-accuracy and compliance against this agent's knowledge base. Leave as 'No agent' for a general audit."
+      >
+        <select
+          value={agentId}
+          onChange={(e) => setAgentId(e.target.value)}
+          className="w-full rounded-2xl bg-[var(--paper)] border border-transparent focus:border-[var(--sky-500)] focus:bg-white px-4 py-3 text-sm focus:outline-none transition"
+        >
+          <option value="">No agent / general audit</option>
+          {agents.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
+          ))}
+        </select>
+      </Field>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <Field index="02" label="Preset" hint="What kind of audit is this?">
+        <Field index="03" label="Preset" hint="What kind of audit is this?">
           <select
             value={preset}
             onChange={(e) => setPreset(e.target.value)}
@@ -90,7 +117,7 @@ export default function SubmitForm() {
           </p>
         </Field>
 
-        <Field index="03" label="Strictness" hint="How tough should Otis be?">
+        <Field index="04" label="Strictness" hint="How tough should Otis be?">
           <select
             value={strictness}
             onChange={(e) => setStrictness(e.target.value)}
@@ -106,7 +133,7 @@ export default function SubmitForm() {
       </div>
 
       <Field
-        index="04"
+        index="05"
         label="Custom focus (optional)"
         hint="Anything specific you want Otis to pay attention to."
       >

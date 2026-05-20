@@ -194,6 +194,8 @@ export function buildSystemPrompt(opts: {
   preset?: string;
   strictness?: string;
   customFocus?: string;
+  agentName?: string;
+  knowledgeBase?: string;
 }): string {
   const p =
     AUDIT_PRESETS[opts.preset ?? "general"] ?? AUDIT_PRESETS.general;
@@ -205,7 +207,26 @@ export function buildSystemPrompt(opts: {
   const strictness_block =
     STRICTNESS_LEVELS[opts.strictness ?? "standard"] ??
     STRICTNESS_LEVELS.standard;
-  return SYSTEM_PROMPT_TEMPLATE.replace("{focus_block}", focus_block)
+
+  let prompt = SYSTEM_PROMPT_TEMPLATE.replace("{focus_block}", focus_block)
     .replace("{strictness_block}", strictness_block)
     .replace("{rubric}", formatRubric(p.emphasis_keys));
+
+  // Ground the audit in the agent's own knowledge base so product-accuracy
+  // and compliance are scored against documented truth, not the LLM's prior.
+  if (opts.knowledgeBase?.trim()) {
+    const kb = opts.knowledgeBase.trim().slice(0, 60000);
+    prompt +=
+      `\n\n---\nAGENT KNOWLEDGE BASE` +
+      (opts.agentName ? ` (${opts.agentName})` : "") +
+      `\n\nThe AI agent on this call is expected to operate strictly within ` +
+      `the knowledge, scripts, policies, and guardrails below. When scoring ` +
+      `product_accuracy and compliance, verify the agent's statements ` +
+      `against THIS document. Flag any claim that contradicts it, any ` +
+      `required disclosure it omits, and any guardrail it breaks. Do not ` +
+      `penalise the agent for following this document.\n\n` +
+      kb;
+  }
+
+  return prompt;
 }

@@ -64,9 +64,21 @@ export async function POST(req: Request) {
 
   const { data: row } = await supabase
     .from("audits")
-    .select("preset, strictness, custom_focus")
+    .select("preset, strictness, custom_focus, agent_id")
     .eq("id", auditId)
     .maybeSingle();
+
+  let agentName: string | undefined;
+  let knowledgeBase: string | undefined;
+  if (row?.agent_id) {
+    const { data: agent } = await supabase
+      .from("agents")
+      .select("name, knowledge_base")
+      .eq("id", row.agent_id)
+      .maybeSingle();
+    agentName = agent?.name ?? undefined;
+    knowledgeBase = agent?.knowledge_base ?? undefined;
+  }
 
   try {
     const evaluation = await scoreTranscript({
@@ -74,6 +86,8 @@ export async function POST(req: Request) {
       preset: row?.preset ?? undefined,
       strictness: row?.strictness ?? undefined,
       customFocus: row?.custom_focus ?? undefined,
+      agentName,
+      knowledgeBase,
     });
 
     await supabase

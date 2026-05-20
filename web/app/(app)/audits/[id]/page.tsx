@@ -15,6 +15,7 @@ export const revalidate = 0;
 type AuditRow = Audit & {
   status?: string;
   error_message?: string | null;
+  agent_id?: string | null;
 };
 
 export default async function AuditDetailPage({
@@ -32,6 +33,16 @@ export default async function AuditDetailPage({
 
   if (error || !audit) {
     notFound();
+  }
+
+  let agent: { id: string; name: string } | null = null;
+  if (audit.agent_id) {
+    const { data } = await supabase
+      .from("agents")
+      .select("id, name")
+      .eq("id", audit.agent_id)
+      .maybeSingle();
+    agent = data;
   }
 
   const pending = audit.status && audit.status !== "completed";
@@ -90,6 +101,14 @@ export default async function AuditDetailPage({
             <span className="rounded-full bg-[var(--paper)] px-3 py-1">
               {new Date(audit.timestamp).toLocaleString()}
             </span>
+            {agent && (
+              <Link
+                href={`/agents/${agent.id}`}
+                className="rounded-full bg-gradient-to-r from-[var(--sky-200)] to-[var(--violet-200)] text-zinc-700 px-3 py-1 font-medium hover:opacity-80 transition"
+              >
+                {agent.name}
+              </Link>
+            )}
             {audit.llm_provider && (
               <span className="rounded-full bg-[var(--paper)] px-3 py-1">
                 {audit.llm_provider}

@@ -77,11 +77,15 @@ export async function scoreTranscript(opts: {
   preset?: string;
   strictness?: string;
   customFocus?: string;
+  agentName?: string;
+  knowledgeBase?: string;
 }): Promise<AuditScored> {
   const systemPrompt = buildSystemPrompt({
     preset: opts.preset,
     strictness: opts.strictness,
     customFocus: opts.customFocus,
+    agentName: opts.agentName,
+    knowledgeBase: opts.knowledgeBase,
   });
 
   const explicit = (process.env.LLM_PROVIDER || "gemini").toLowerCase();

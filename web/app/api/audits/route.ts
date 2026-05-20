@@ -19,6 +19,7 @@ function originFromRequest(req: Request): string {
 export async function POST(req: Request) {
   let body: {
     audio_url?: string;
+    agent_id?: string | null;
     preset?: string;
     strictness?: string;
     custom_focus?: string;
@@ -51,6 +52,7 @@ export async function POST(req: Request) {
     timestamp: new Date().toISOString(),
     source: "next-app",
     target: audioUrl,
+    agent_id: body.agent_id || null,
     preset: body.preset || "general",
     strictness: body.strictness || "standard",
     custom_focus: body.custom_focus || "",
