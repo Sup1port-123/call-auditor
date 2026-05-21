@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import SubmitForm from "./submit-form";
+import NewAuditTabs from "./new-audit-tabs";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -42,7 +42,7 @@ export default async function NewAuditPage({
         </p>
       </div>
 
-      <SubmitForm agents={agents ?? []} defaultAgentId={agent ?? ""} />
+      <NewAuditTabs agents={agents ?? []} defaultAgentId={agent ?? ""} />
     </div>
   );
 }
