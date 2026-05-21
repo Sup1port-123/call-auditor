@@ -28,21 +28,43 @@ export function getAssemblyClient() {
 // Submit a recording URL for transcription with diarization. The webhook
 // fires on the configured URL when AssemblyAI finishes — we look up the
 // audit by transcript_id at that point.
+//
+// Calls the REST API directly rather than the SDK: AssemblyAI now requires
+// the `speech_models` field, and pinning the SDK version is fragile while
+// they keep changing the contract. universal-3-pro gives the best Hindi /
+// Hinglish coverage; universal-2 is the fallback.
 export async function submitTranscription(opts: {
   audioUrl: string;
   webhookUrl: string;
   auditId: string;
 }): Promise<{ transcriptId: string }> {
-  const client = getAssemblyClient();
-  const transcript = await client.transcripts.submit({
-    audio_url: opts.audioUrl,
-    speaker_labels: true,
-    language_code: ASSEMBLY_LANGUAGE,
-    webhook_url: opts.webhookUrl,
-    webhook_auth_header_name: "x-audit-id",
-    webhook_auth_header_value: opts.auditId,
+  const key = process.env.ASSEMBLYAI_API_KEY;
+  if (!key) throw new Error("ASSEMBLYAI_API_KEY is not set");
+
+  const res = await fetch("https://api.assemblyai.com/v2/transcript", {
+    method: "POST",
+    headers: { authorization: key, "content-type": "application/json" },
+    body: JSON.stringify({
+      audio_url: opts.audioUrl,
+      speech_models: ["universal-3-pro", "universal-2"],
+      speaker_labels: true,
+      language_code: ASSEMBLY_LANGUAGE,
+      webhook_url: opts.webhookUrl,
+      webhook_auth_header_name: "x-audit-id",
+      webhook_auth_header_value: opts.auditId,
+    }),
   });
-  return { transcriptId: transcript.id };
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(
+      `AssemblyAI submit failed (${res.status}): ${body.slice(0, 300)}`,
+    );
+  }
+
+  const data = (await res.json()) as { id?: string };
+  if (!data.id) throw new Error("AssemblyAI did not return a transcript id");
+  return { transcriptId: data.id };
 }
 
 // Pull the full transcript text with [MM:SS] timestamps + speaker labels.
