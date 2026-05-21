@@ -55,7 +55,7 @@ export default function BatchView({
 
     const drive = async () => {
       let guard = 0;
-      while (!cancelled && guard < 3000) {
+      while (!cancelled && guard < 5000) {
         guard++;
         let s: Counts;
         try {
@@ -67,26 +67,19 @@ export default function BatchView({
         if (cancelled) return;
         setCounts(s);
 
-        if (s.queued > 0) {
-          // Submission phase — push the next chunk to AssemblyAI.
-          try {
-            await fetch(`/api/batches/${batch.id}/process`, {
-              method: "POST",
-            });
-          } catch {
-            await sleep(3000);
-          }
-          continue;
-        }
-
         if (s.done) {
           router.refresh();
           break;
         }
 
-        // Transcription / scoring in flight — wait, then pull fresh rows.
+        // process() submits queued rows when any exist, otherwise
+        // finalizes transcribing ones — so we just keep calling it.
+        try {
+          await fetch(`/api/batches/${batch.id}/process`, { method: "POST" });
+        } catch {
+          await sleep(3000);
+        }
         router.refresh();
-        await sleep(4000);
       }
     };
 
