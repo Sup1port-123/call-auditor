@@ -9,7 +9,7 @@ type Status = "transcribing" | "scoring" | "completed" | "failed";
 const STATUS_COPY: Record<Status, { title: string; sub: string }> = {
   transcribing: {
     title: "Listening to the call…",
-    sub: "Otis is transcribing with speaker diarization. This usually takes 30–90 seconds.",
+    sub: "Otis is transcribing with speaker diarization.",
   },
   scoring: {
     title: "Scoring against the rubric…",
@@ -18,6 +18,13 @@ const STATUS_COPY: Record<Status, { title: string; sub: string }> = {
   completed: { title: "Done!", sub: "Loading results…" },
   failed: { title: "Something went wrong.", sub: "" },
 };
+
+// Transcription / scoring report no real percentage, so the bar is a
+// time estimate: it eases toward the end of each phase and snaps to the
+// real value the moment a phase actually completes. Transcribe owns the
+// first 65% of the bar, scoring the last 35%.
+const TRANSCRIBE_MS = 40_000;
+const SCORE_MS = 30_000;
 
 export default function AuditPoller({
   id,
@@ -31,12 +38,17 @@ export default function AuditPoller({
   const router = useRouter();
   const [status, setStatus] = useState<Status>(initialStatus);
   const [error, setError] = useState<string | null>(initialError);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [progress, setProgress] = useState(
+    initialStatus === "scoring" ? 65 : 4,
+  );
 
+  const phaseStartRef = useRef(Date.now());
+  const progressRef = useRef(progress);
+
+  // Poll the status endpoint (which also self-heals stuck audits).
   useEffect(() => {
     if (status === "completed" || status === "failed") return;
-
-    intervalRef.current = setInterval(async () => {
+    const interval = setInterval(async () => {
       try {
         const res = await fetch(`/api/audits/${id}/status`, {
           cache: "no-store",
@@ -46,23 +58,49 @@ export default function AuditPoller({
           status: Status;
           error_message: string | null;
         };
-        setStatus(data.status);
+        setStatus((prev) => {
+          if (data.status !== prev) phaseStartRef.current = Date.now();
+          return data.status;
+        });
         setError(data.error_message);
-        if (data.status === "completed") {
-          if (intervalRef.current) clearInterval(intervalRef.current);
-          router.refresh();
-        }
+        if (data.status === "completed") router.refresh();
       } catch {
-        // network blip — try again next tick
+        // network blip — try next tick
       }
     }, 4000);
-
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
+    return () => clearInterval(interval);
   }, [id, status, router]);
 
+  // Drive the estimate bar. Never moves backward.
+  useEffect(() => {
+    if (status === "completed") {
+      progressRef.current = 100;
+      setProgress(100);
+      return;
+    }
+    if (status === "failed") return;
+
+    if (status === "scoring" && progressRef.current < 65) {
+      progressRef.current = 65;
+      setProgress(65);
+    }
+
+    const tick = setInterval(() => {
+      const elapsed = Date.now() - phaseStartRef.current;
+      const target =
+        status === "transcribing"
+          ? Math.min(62, 4 + (elapsed / TRANSCRIBE_MS) * 58)
+          : Math.min(97, 65 + (elapsed / SCORE_MS) * 32);
+      if (target > progressRef.current) {
+        progressRef.current = target;
+        setProgress(target);
+      }
+    }, 250);
+    return () => clearInterval(tick);
+  }, [status]);
+
   const copy = STATUS_COPY[status];
+  const failed = status === "failed";
 
   return (
     <div className="rounded-3xl bg-[var(--paper)] p-12 flex flex-col items-center text-center">
@@ -75,61 +113,50 @@ export default function AuditPoller({
       </div>
       <div className="text-zinc-500 text-sm mt-2 max-w-md">{copy.sub}</div>
 
-      {status === "failed" && error && (
+      {!failed && (
+        <div className="w-full max-w-md mt-8">
+          <div className="flex items-center justify-between text-xs mb-2">
+            <span className="font-medium text-[var(--ink)]">
+              {status === "transcribing"
+                ? "Transcribing"
+                : status === "scoring"
+                ? "Scoring"
+                : "Finishing"}
+            </span>
+            <span className="tabular-nums text-zinc-500">
+              {Math.round(progress)}%
+            </span>
+          </div>
+          <div className="h-3 rounded-full bg-white overflow-hidden">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-[var(--sky-500)] via-[var(--violet-500)] to-[var(--pink-500)] transition-[width] duration-500 ease-out"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+          <div className="flex items-center justify-between text-[11px] text-zinc-400 mt-2">
+            <span
+              className={
+                status !== "transcribing" ? "text-emerald-600" : undefined
+              }
+            >
+              {status !== "transcribing" ? "✓ Transcribed" : "Transcribe"}
+            </span>
+            <span
+              className={
+                status === "completed" ? "text-emerald-600" : undefined
+              }
+            >
+              {status === "completed" ? "✓ Scored" : "Score"}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {failed && error && (
         <div className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 text-rose-700 text-sm px-4 py-3 max-w-xl text-left">
           {error}
         </div>
       )}
-
-      <div className="mt-8 flex items-center gap-3 text-xs text-zinc-500">
-        <Step active={status === "transcribing"} done={status !== "transcribing"} label="Transcribe" />
-        <span className="text-zinc-300">→</span>
-        <Step
-          active={status === "scoring"}
-          done={status === "completed"}
-          label="Score"
-        />
-      </div>
     </div>
-  );
-}
-
-function Step({
-  active,
-  done,
-  label,
-}: {
-  active: boolean;
-  done: boolean;
-  label: string;
-}) {
-  return (
-    <span className="flex items-center gap-2">
-      <span className="relative flex h-2 w-2">
-        {active && (
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--sky-500)] opacity-75" />
-        )}
-        <span
-          className={`relative inline-flex rounded-full h-2 w-2 ${
-            active
-              ? "bg-[var(--sky-500)]"
-              : done
-              ? "bg-emerald-500"
-              : "bg-zinc-300"
-          }`}
-        />
-      </span>
-      <span
-        className={
-          active
-            ? "text-[var(--ink)]"
-            : done
-            ? "text-emerald-600"
-            : "text-zinc-400"
-        }
-      >
-        {done && !active ? `✓ ${label}d` : label}
-      </span>
-    </span>
   );
 }
