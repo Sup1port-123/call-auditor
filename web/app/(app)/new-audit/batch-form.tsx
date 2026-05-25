@@ -4,6 +4,9 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import LottiePlayer from "@/components/lottie-player";
 import { AUDIT_PRESETS, STRICTNESS_LEVELS } from "@/lib/rubric";
+import { detectUrlColumn } from "@/lib/types/batch";
+
+const MAX_URLS = 1000;
 
 export default function BatchForm({
   agents,
@@ -15,6 +18,11 @@ export default function BatchForm({
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
+  const [urls, setUrls] = useState<string[]>([]);
+  const [urlColumn, setUrlColumn] = useState<string | null>(null);
+  const [parseError, setParseError] = useState<string | null>(null);
+  const [parsing, setParsing] = useState(false);
+
   const [agentId, setAgentId] = useState(defaultAgentId);
   const [preset, setPreset] = useState("general");
   const [strictness, setStrictness] = useState("standard");
@@ -22,32 +30,92 @@ export default function BatchForm({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  async function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0] ?? null;
+    setFile(f);
+    setUrls([]);
+    setUrlColumn(null);
+    setParseError(null);
+    if (!f) return;
+
+    setParsing(true);
+    try {
+      const XLSX = await import("xlsx");
+      const buf = await f.arrayBuffer();
+      const wb = XLSX.read(new Uint8Array(buf), { type: "array" });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      if (!sheet) throw new Error("The file has no sheets.");
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+        defval: "",
+      });
+      if (rows.length === 0) throw new Error("The spreadsheet has no data rows.");
+      const headers = Object.keys(rows[0]);
+      const col = detectUrlColumn(headers);
+      if (!col) {
+        throw new Error(
+          `Couldn't find a recording-URL column. Name one "recording_url", "audio_url", "recording", … Columns found: ${headers.join(", ")}`,
+        );
+      }
+
+      const seen = new Set<string>();
+      const extracted: string[] = [];
+      for (const r of rows) {
+        const v = String(r[col] ?? "").trim();
+        if (/^https?:\/\//i.test(v) && !seen.has(v)) {
+          seen.add(v);
+          extracted.push(v);
+        }
+      }
+      if (extracted.length === 0) {
+        throw new Error(`Column "${col}" has no valid http(s) URLs.`);
+      }
+      if (extracted.length > MAX_URLS) {
+        throw new Error(
+          `Too many recordings (${extracted.length}). Max ${MAX_URLS} per batch.`,
+        );
+      }
+      setUrlColumn(col);
+      setUrls(extracted);
+    } catch (err) {
+      setParseError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setParsing(false);
+    }
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!file) {
       setError("Choose a CSV or Excel file first.");
       return;
     }
+    if (urls.length === 0) {
+      setError(parseError ?? "No valid URLs found in the file.");
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
-      const form = new FormData();
-      form.set("file", file);
-      form.set("agent_id", agentId);
-      form.set("preset", preset);
-      form.set("strictness", strictness);
-      form.set("custom_focus", customFocus);
-
-      const res = await fetch("/api/batches", { method: "POST", body: form });
+      const res = await fetch("/api/batches", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          filename: file.name,
+          url_column: urlColumn,
+          urls,
+          agent_id: agentId,
+          preset,
+          strictness,
+          custom_focus: customFocus,
+        }),
+      });
       const raw = await res.text();
       let data: { id?: string; error?: string } = {};
       if (raw) {
         try {
           data = JSON.parse(raw);
         } catch {
-          throw new Error(
-            `Server returned a non-JSON response (${res.status}).`,
-          );
+          throw new Error(`Server returned a non-JSON response (${res.status}).`);
         }
       } else {
         throw new Error(`Empty ${res.status} response — the function crashed.`);
@@ -68,10 +136,10 @@ export default function BatchForm({
           className="w-48 h-48"
         />
         <div className="font-display text-xl font-bold mt-2">
-          Reading your spreadsheet…
+          Queueing {urls.length} calls…
         </div>
         <div className="text-zinc-500 text-sm mt-2">
-          Finding the recording-URL column and queueing every call.
+          We&apos;ll send you to the batch page in a second.
         </div>
       </div>
     );
@@ -88,7 +156,7 @@ export default function BatchForm({
           ref={fileRef}
           type="file"
           accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          onChange={onFileChange}
           className="hidden"
         />
         <button
@@ -117,6 +185,22 @@ export default function BatchForm({
             </>
           )}
         </button>
+
+        {parsing && (
+          <div className="text-xs text-zinc-500 mt-2">Reading file…</div>
+        )}
+        {parseError && (
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 text-rose-700 text-sm px-4 py-3 mt-3">
+            {parseError}
+          </div>
+        )}
+        {urls.length > 0 && urlColumn && (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 text-emerald-800 text-sm px-4 py-3 mt-3">
+            Found{" "}
+            <strong className="tabular-nums">{urls.length}</strong>{" "}
+            recording URLs in column <strong>{urlColumn}</strong>.
+          </div>
+        )}
       </Field>
 
       <Field
@@ -190,10 +274,12 @@ export default function BatchForm({
 
       <button
         type="submit"
-        disabled={submitting}
+        disabled={submitting || parsing || urls.length === 0}
         className="w-full rounded-full bg-[var(--ink)] text-white py-3.5 text-sm font-medium hover:bg-zinc-800 transition disabled:opacity-50 shadow-[0_10px_30px_-12px_rgba(15,23,42,0.5)]"
       >
-        Queue batch audit
+        {urls.length > 0
+          ? `Queue ${urls.length} audits`
+          : "Queue batch audit"}
       </button>
     </form>
   );

@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-import * as XLSX from "xlsx";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { newBatchId, detectUrlColumn } from "@/lib/types/batch";
+import { newBatchId } from "@/lib/types/batch";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -19,93 +18,59 @@ function newAuditId(): string {
   return `${stamp}-${Math.random().toString(16).slice(2, 8)}`;
 }
 
+type BatchBody = {
+  filename?: string;
+  url_column?: string;
+  urls?: unknown;
+  agent_id?: string | null;
+  preset?: string;
+  strictness?: string;
+  custom_focus?: string;
+};
+
 export async function POST(req: Request) {
   try {
-    let form: FormData;
+    let body: BatchBody;
     try {
-      form = await req.formData();
+      body = (await req.json()) as BatchBody;
     } catch {
-      return NextResponse.json(
-        { error: "Expected multipart form data" },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
     }
 
-    const file = form.get("file");
-    if (!(file instanceof File)) {
-      return NextResponse.json(
-        { error: "No spreadsheet file received" },
-        { status: 400 },
-      );
-    }
-
-    const agentId = String(form.get("agent_id") ?? "").trim() || null;
-    const preset = String(form.get("preset") ?? "general").trim() || "general";
+    const filename = String(body.filename ?? "").trim() || null;
+    const urlColumn = String(body.url_column ?? "").trim() || null;
+    const agentId = String(body.agent_id ?? "").trim() || null;
+    const preset = String(body.preset ?? "general").trim() || "general";
     const strictness =
-      String(form.get("strictness") ?? "standard").trim() || "standard";
-    const customFocus = String(form.get("custom_focus") ?? "").trim();
+      String(body.strictness ?? "standard").trim() || "standard";
+    const customFocus = String(body.custom_focus ?? "").trim();
 
-    // Parse the sheet (xlsx auto-detects CSV vs XLSX from the buffer).
-    let rows: Record<string, unknown>[];
-    let headers: string[];
-    try {
-      const buf = Buffer.from(await file.arrayBuffer());
-      const wb = XLSX.read(buf, { type: "buffer" });
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      if (!sheet) throw new Error("the file has no sheets");
-      rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
-        defval: "",
-      });
-      headers = rows.length > 0 ? Object.keys(rows[0]) : [];
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+    if (!Array.isArray(body.urls)) {
       return NextResponse.json(
-        { error: `Could not read the spreadsheet: ${message}` },
-        { status: 422 },
+        { error: "urls must be an array" },
+        { status: 400 },
       );
     }
 
-    if (rows.length === 0) {
-      return NextResponse.json(
-        { error: "The spreadsheet has no data rows." },
-        { status: 422 },
-      );
-    }
-
-    const urlColumn = detectUrlColumn(headers);
-    if (!urlColumn) {
-      return NextResponse.json(
-        {
-          error:
-            "Couldn't find a recording-URL column. Name a column something " +
-            `like "recording_url" or "audio_url". Columns found: ${headers.join(", ")}`,
-        },
-        { status: 422 },
-      );
-    }
-
-    // Extract + dedupe valid http(s) URLs from the detected column.
+    // Filter + dedupe defensively, in case the client mis-parsed.
     const seen = new Set<string>();
     const urls: string[] = [];
-    for (const row of rows) {
-      const v = String(row[urlColumn] ?? "").trim();
-      if (/^https?:\/\//i.test(v) && !seen.has(v)) {
-        seen.add(v);
-        urls.push(v);
+    for (const u of body.urls as unknown[]) {
+      const s = typeof u === "string" ? u.trim() : "";
+      if (/^https?:\/\//i.test(s) && !seen.has(s)) {
+        seen.add(s);
+        urls.push(s);
       }
     }
-
     if (urls.length === 0) {
       return NextResponse.json(
-        {
-          error: `Column "${urlColumn}" was found but it has no valid http(s) URLs.`,
-        },
-        { status: 422 },
+        { error: "No valid http(s) URLs in the upload." },
+        { status: 400 },
       );
     }
     if (urls.length > MAX_URLS) {
       return NextResponse.json(
-        { error: `Too many recordings (${urls.length}). Max ${MAX_URLS} per batch.` },
+        { error: `Too many recordings (${urls.length}). Max ${MAX_URLS}.` },
         { status: 413 },
       );
     }
@@ -126,7 +91,7 @@ export async function POST(req: Request) {
 
     const { error: batchErr } = await supabase.from("batches").insert({
       id: batchId,
-      label: file.name,
+      label: filename,
       agent_id: agentId,
       preset,
       strictness,
@@ -142,8 +107,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // One queued audit per URL. Submission to AssemblyAI happens later, in
-    // chunks, via /api/batches/[id]/process — keeps this request fast.
     const auditRows = urls.map((url) => ({
       id: newAuditId(),
       timestamp: now,
