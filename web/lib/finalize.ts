@@ -5,6 +5,8 @@ type TranscriptLike = {
   status?: string;
   error?: string | null;
   text?: string | null;
+  // AssemblyAI reports the recording length in seconds.
+  audio_duration?: number | null;
   utterances?: { start?: number; speaker?: string; text?: string }[] | null;
 };
 
@@ -97,6 +99,10 @@ export async function finalizeAudit(
   }
 
   const transcriptText = formatTranscript(t);
+  const durationSeconds =
+    typeof t.audio_duration === "number" && t.audio_duration >= 0
+      ? Math.round(t.audio_duration)
+      : null;
 
   let agentName: string | undefined;
   let knowledgeBase: string | undefined;
@@ -124,6 +130,7 @@ export async function finalizeAudit(
       .update({
         status: "completed",
         transcript: transcriptText,
+        duration_seconds: durationSeconds,
         llm_provider: evaluation.llm_provider,
         llm_fallback_reason: evaluation.llm_fallback_reason,
         overall_score: evaluation.overall_score,
@@ -144,6 +151,7 @@ export async function finalizeAudit(
       .update({
         status: "failed",
         transcript: transcriptText,
+        duration_seconds: durationSeconds,
         error_message: `LLM scoring failed: ${message}`,
       })
       .eq("id", auditId);

@@ -15,6 +15,7 @@ export type Audit = {
   what_was_lacking: string | null;
   recommendations_json: string | null;
   transcript: string | null;
+  duration_seconds: number | null;
 };
 
 export type DimensionScore = {

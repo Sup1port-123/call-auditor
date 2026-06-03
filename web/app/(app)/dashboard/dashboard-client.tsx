@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { motion } from "motion/react";
 import AnimatedCounter from "@/components/animated-counter";
+import DashboardFilters from "./dashboard-filters";
+import { formatDuration, type RawParams } from "@/lib/audit-filters";
 
 type RecentRow = {
   id: string;
@@ -10,18 +12,29 @@ type RecentRow = {
   target: string;
   llm_provider: string | null;
   overall_score: number | null;
+  duration_seconds: number | null;
 };
 
 export default function DashboardClient({
-  weekCount,
-  totalCount,
+  filtered = false,
+  weekCount = 0,
+  totalCount = 0,
+  matchCount = 0,
   avgScore,
+  avgDuration = null,
   recent,
+  filters,
+  error = null,
 }: {
-  weekCount: number;
-  totalCount: number;
+  filtered?: boolean;
+  weekCount?: number;
+  totalCount?: number;
+  matchCount?: number;
   avgScore: number | null;
+  avgDuration?: number | null;
   recent: RecentRow[];
+  filters: RawParams;
+  error?: string | null;
 }) {
   return (
     <div className="px-10 lg:px-16 py-14 max-w-6xl">
@@ -29,7 +42,7 @@ export default function DashboardClient({
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-        className="mb-12"
+        className="mb-10"
       >
         <div className="text-xs uppercase tracking-[0.25em] text-[var(--sky-700)] font-semibold mb-3">
           Dashboard
@@ -41,7 +54,9 @@ export default function DashboardClient({
           </span>
         </h1>
         <p className="text-zinc-500 mt-4 max-w-xl">
-          {totalCount > 0
+          {filtered
+            ? "Showing audits that match your filters — cards and list reflect the filtered set."
+            : totalCount > 0
             ? "Every call audited and scored, summarized below. Click any audit for the full breakdown."
             : "Run your first audit to start filling this dashboard."}
         </p>
@@ -53,36 +68,68 @@ export default function DashboardClient({
         </Link>
       </motion.div>
 
+      <DashboardFilters initial={filters} />
+
+      {error && (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 text-rose-700 text-sm px-5 py-3 mb-6">
+          Couldn&apos;t apply filters: {error}
+        </div>
+      )}
+
       <motion.div
         initial="hidden"
         animate="visible"
         variants={{
-          visible: { transition: { staggerChildren: 0.08, delayChildren: 0.2 } },
+          visible: { transition: { staggerChildren: 0.08 } },
         }}
         className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-16"
       >
-        <KpiCard index="01" label="Audits this week" value={weekCount} />
-        <KpiCard
-          index="02"
-          label="Avg score"
-          value={avgScore}
-          decimals={1}
-          suffix={avgScore != null ? "/10" : ""}
-        />
-        <KpiCard index="03" label="All time" value={totalCount} />
+        {filtered ? (
+          <>
+            <KpiCard index="01" label="Matching audits" value={matchCount} />
+            <KpiCard
+              index="02"
+              label="Avg score"
+              value={avgScore}
+              decimals={1}
+              suffix={avgScore != null ? "/10" : ""}
+            />
+            <KpiCard
+              index="03"
+              label="Avg duration"
+              displayValue={
+                avgDuration != null ? formatDuration(avgDuration) : "—"
+              }
+            />
+          </>
+        ) : (
+          <>
+            <KpiCard index="01" label="Audits this week" value={weekCount} />
+            <KpiCard
+              index="02"
+              label="Avg score"
+              value={avgScore}
+              decimals={1}
+              suffix={avgScore != null ? "/10" : ""}
+            />
+            <KpiCard index="03" label="All time" value={totalCount} />
+          </>
+        )}
       </motion.div>
 
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, delay: 0.4 }}
+        transition={{ duration: 0.6, delay: 0.2 }}
         className="flex items-end justify-between mb-5"
       >
         <div>
           <div className="text-xs uppercase tracking-[0.25em] text-[var(--sky-700)] font-semibold mb-1">
-            Recent
+            {filtered ? "Results" : "Recent"}
           </div>
-          <h2 className="font-display text-2xl font-bold">Latest audits</h2>
+          <h2 className="font-display text-2xl font-bold">
+            {filtered ? `Filtered audits (${recent.length})` : "Latest audits"}
+          </h2>
         </div>
         <Link
           href="/audits"
@@ -97,7 +144,7 @@ export default function DashboardClient({
           initial="hidden"
           animate="visible"
           variants={{
-            visible: { transition: { staggerChildren: 0.04, delayChildren: 0.5 } },
+            visible: { transition: { staggerChildren: 0.03 } },
           }}
           className="rounded-3xl bg-[var(--paper)] divide-y divide-white overflow-hidden"
         >
@@ -118,8 +165,17 @@ export default function DashboardClient({
                   <div className="text-[15px] font-medium truncate text-[var(--ink)] group-hover:text-black">
                     {row.target}
                   </div>
-                  <div className="text-xs text-zinc-500 mt-1 flex items-center gap-2">
+                  <div className="text-xs text-zinc-500 mt-1 flex items-center gap-2 flex-wrap">
                     <span>{new Date(row.timestamp).toLocaleString()}</span>
+                    {row.duration_seconds != null &&
+                      row.duration_seconds >= 0 && (
+                        <>
+                          <span className="text-zinc-300">·</span>
+                          <span className="tabular-nums">
+                            {formatDuration(row.duration_seconds)}
+                          </span>
+                        </>
+                      )}
                     {row.llm_provider && (
                       <>
                         <span className="text-zinc-300">·</span>
@@ -136,7 +192,7 @@ export default function DashboardClient({
           ))}
         </motion.div>
       ) : (
-        <EmptyState />
+        <EmptyState filtered={filtered} />
       )}
 
       <motion.section
@@ -183,12 +239,14 @@ function KpiCard({
   value,
   decimals = 0,
   suffix,
+  displayValue,
 }: {
   index: string;
   label: string;
-  value: number | null;
+  value?: number | null;
   decimals?: number;
   suffix?: string;
+  displayValue?: string;
 }) {
   return (
     <motion.div
@@ -207,7 +265,15 @@ function KpiCard({
         {label}
       </div>
       <div className="font-display text-5xl md:text-6xl font-extrabold mt-6 tabular-nums tracking-tight">
-        <AnimatedCounter value={value} decimals={decimals} suffix={suffix} />
+        {displayValue != null ? (
+          displayValue
+        ) : (
+          <AnimatedCounter
+            value={value ?? null}
+            decimals={decimals}
+            suffix={suffix}
+          />
+        )}
       </div>
     </motion.div>
   );
@@ -266,18 +332,22 @@ function ScorePill({ score }: { score: number | null }) {
   );
 }
 
-function EmptyState() {
+function EmptyState({ filtered }: { filtered: boolean }) {
   return (
     <div className="rounded-3xl bg-[var(--paper)] p-12 text-center">
       <div className="text-sm text-zinc-500">
-        No audits yet. Run your first one and it&apos;ll show up here.
+        {filtered
+          ? "No audits match these filters. Try widening them or clear all."
+          : "No audits yet. Run your first one and it'll show up here."}
       </div>
-      <Link
-        href="/new-audit"
-        className="inline-block mt-5 rounded-full bg-[var(--ink)] text-white px-6 py-2.5 text-sm font-medium hover:bg-zinc-800 transition"
-      >
-        + Run an audit
-      </Link>
+      {!filtered && (
+        <Link
+          href="/new-audit"
+          className="inline-block mt-5 rounded-full bg-[var(--ink)] text-white px-6 py-2.5 text-sm font-medium hover:bg-zinc-800 transition"
+        >
+          + Run an audit
+        </Link>
+      )}
     </div>
   );
 }
