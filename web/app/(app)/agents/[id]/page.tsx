@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import type { Agent } from "@/lib/types/agent";
+import AgentEditor from "./agent-editor";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -31,8 +32,6 @@ export default async function AgentDetailPage({
     .order("timestamp", { ascending: false })
     .limit(20);
 
-  const kb = agent.knowledge_base ?? "";
-
   return (
     <div className="px-10 lg:px-16 py-14 max-w-5xl">
       <Link
@@ -42,47 +41,7 @@ export default async function AgentDetailPage({
         &larr; All agents
       </Link>
 
-      <div className="flex items-start gap-5 mb-10">
-        <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[var(--sky-200)] to-[var(--violet-500)] shrink-0" />
-        <div>
-          <div className="text-xs uppercase tracking-[0.25em] text-[var(--sky-700)] font-semibold mb-2">
-            Agent
-          </div>
-          <h1 className="font-display text-4xl font-extrabold tracking-tight leading-none">
-            {agent.name}
-          </h1>
-          {agent.target && (
-            <p className="text-zinc-600 mt-2 max-w-xl">{agent.target}</p>
-          )}
-        </div>
-      </div>
-
-      <div className="flex flex-wrap gap-3 mb-10">
-        <Link
-          href={`/new-audit?agent=${agent.id}`}
-          className="rounded-full bg-[var(--ink)] text-white px-5 py-2 text-sm font-medium hover:bg-zinc-800 transition"
-        >
-          + Audit a call for this agent
-        </Link>
-      </div>
-
-      <Section index="01" title="Knowledge base">
-        {kb ? (
-          <>
-            <p className="text-xs text-zinc-500 mb-3">
-              {kb.length.toLocaleString()} characters · injected into the
-              scoring prompt for every audit tied to this agent.
-            </p>
-            <pre className="text-zinc-700 text-sm leading-relaxed whitespace-pre-wrap font-mono max-h-[480px] overflow-y-auto rounded-xl bg-white p-4">
-              {kb}
-            </pre>
-          </>
-        ) : (
-          <p className="text-sm text-zinc-500">
-            No knowledge base attached.
-          </p>
-        )}
-      </Section>
+      <AgentEditor agent={agent} />
 
       <Section index="02" title={`Audits (${audits?.length ?? 0})`}>
         {audits && audits.length > 0 ? (

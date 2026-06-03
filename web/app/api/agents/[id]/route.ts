@@ -1,14 +1,21 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { newAgentId } from "@/lib/types/agent";
 import { resolveKnowledgeBase, sanitizeText } from "@/lib/agent-kb";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-export async function POST(req: Request) {
+export async function PATCH(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
   // Whole handler wrapped so a crash still returns JSON, never an empty body.
   try {
+    const { id } = await params;
+    if (!id) {
+      return NextResponse.json({ error: "Missing agent id" }, { status: 400 });
+    }
+
     let form: FormData;
     try {
       form = await req.formData();
@@ -44,8 +51,6 @@ export async function POST(req: Request) {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error("[otis] admin client failed:", message);
-      // Surface exactly which SUPABASE-prefixed env keys the running
-      // function can actually see, so we stop guessing.
       const visible =
         Object.keys(process.env)
           .filter((k) => k.includes("SUPABASE"))
@@ -61,28 +66,32 @@ export async function POST(req: Request) {
       );
     }
 
-    const id = newAgentId();
-    const { error } = await supabase.from("agents").insert({
-      id,
-      name,
-      target: target || null,
-      description: null,
-      knowledge_base: knowledgeBase || null,
-      created_at: new Date().toISOString(),
-    });
+    const { data, error } = await supabase
+      .from("agents")
+      .update({
+        name,
+        target: target || null,
+        knowledge_base: knowledgeBase || null,
+      })
+      .eq("id", id)
+      .select("id")
+      .maybeSingle();
 
     if (error) {
-      console.error("[otis] agent insert failed:", error.message);
+      console.error("[otis] agent update failed:", error.message);
       return NextResponse.json(
         { error: `Could not save agent: ${error.message} [${diag}]` },
         { status: 500 },
       );
     }
+    if (!data) {
+      return NextResponse.json({ error: "Agent not found" }, { status: 404 });
+    }
 
     return NextResponse.json({ id });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error("[otis] /api/agents crashed:", message);
+    console.error("[otis] /api/agents/[id] crashed:", message);
     return NextResponse.json(
       { error: `Unexpected server error: ${message}` },
       { status: 500 },
