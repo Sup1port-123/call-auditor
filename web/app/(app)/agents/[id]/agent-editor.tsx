@@ -4,6 +4,11 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Agent } from "@/lib/types/agent";
+import RubricEditor, {
+  defaultRubricRows,
+  rubricRowsFromJson,
+  type RubricRow,
+} from "../rubric-editor";
 
 type KbMode = "text" | "pdf";
 
@@ -11,11 +16,15 @@ export default function AgentEditor({ agent }: { agent: Agent }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
 
+  const initialRubric = () =>
+    rubricRowsFromJson(agent.rubric_json) ?? defaultRubricRows();
+
   const [name, setName] = useState(agent.name);
   const [target, setTarget] = useState(agent.target ?? "");
   const [kbMode, setKbMode] = useState<KbMode>("text");
   const [kbText, setKbText] = useState(agent.knowledge_base ?? "");
   const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [rubric, setRubric] = useState<RubricRow[]>(initialRubric);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -26,6 +35,7 @@ export default function AgentEditor({ agent }: { agent: Agent }) {
     setKbMode("text");
     setKbText(agent.knowledge_base ?? "");
     setPdfFile(null);
+    setRubric(initialRubric());
     setError(null);
     setEditing(true);
   }
@@ -44,6 +54,7 @@ export default function AgentEditor({ agent }: { agent: Agent }) {
       } else if (pdfFile) {
         form.set("pdf", pdfFile);
       }
+      form.set("rubric", JSON.stringify(rubric));
       const res = await fetch(`/api/agents/${agent.id}`, {
         method: "PATCH",
         body: form,
@@ -107,7 +118,7 @@ export default function AgentEditor({ agent }: { agent: Agent }) {
             onClick={startEditing}
             className="rounded-full bg-[var(--paper)] text-[var(--ink)] px-5 py-2 text-sm font-medium hover:bg-[var(--paper-strong)] transition"
           >
-            Edit knowledge base
+            Edit agent
           </button>
         </div>
 
@@ -125,6 +136,35 @@ export default function AgentEditor({ agent }: { agent: Agent }) {
           ) : (
             <p className="text-sm text-zinc-500">No knowledge base attached.</p>
           )}
+        </Section>
+
+        <Section index="02" title="Scoring rubric">
+          <p className="text-xs text-zinc-500 mb-4">
+            Otis grades every call for this agent on these dimensions, each
+            within its own score range.
+          </p>
+          <div className="space-y-3">
+            {initialRubric().map((d, i) => (
+              <div
+                key={i}
+                className="rounded-xl bg-white p-4 flex items-start gap-4"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-[var(--ink)]">
+                    {d.name}
+                  </div>
+                  {d.criteria && (
+                    <p className="text-xs text-zinc-500 mt-1 leading-relaxed">
+                      {d.criteria}
+                    </p>
+                  )}
+                </div>
+                <span className="shrink-0 rounded-full bg-[var(--paper)] px-3 py-1 text-xs font-medium tabular-nums text-zinc-600">
+                  {d.min}–{d.max}
+                </span>
+              </div>
+            ))}
+          </div>
         </Section>
       </>
     );
@@ -217,6 +257,14 @@ export default function AgentEditor({ agent }: { agent: Agent }) {
               </span>
             </label>
           )}
+        </Field>
+
+        <Field
+          index="04"
+          label="Scoring rubric"
+          hint="The dimensions Otis grades this agent on, and the min–max score range for each."
+        >
+          <RubricEditor value={rubric} onChange={setRubric} />
         </Field>
 
         {error && (

@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { newAgentId } from "@/lib/types/agent";
-import { resolveKnowledgeBase, sanitizeText } from "@/lib/agent-kb";
+import {
+  resolveKnowledgeBase,
+  sanitizeText,
+  rubricJsonFromForm,
+} from "@/lib/agent-kb";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -68,6 +72,7 @@ export async function POST(req: Request) {
       target: target || null,
       description: null,
       knowledge_base: knowledgeBase || null,
+      rubric_json: rubricJsonFromForm(form),
       created_at: new Date().toISOString(),
     });
 

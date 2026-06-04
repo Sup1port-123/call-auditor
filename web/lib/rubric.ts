@@ -4,9 +4,15 @@ export type RubricDimension = {
   key: string;
   name: string;
   criteria: string;
+  min: number;
+  max: number;
 };
 
-export const RUBRIC_DIMENSIONS: RubricDimension[] = [
+// Default score range for the built-in dimensions.
+export const DEFAULT_MIN = 1;
+export const DEFAULT_MAX = 5;
+
+const BASE_DIMENSIONS: Omit<RubricDimension, "min" | "max">[] = [
   {
     key: "opening",
     name: "Opening & Identification",
@@ -68,6 +74,71 @@ export const RUBRIC_DIMENSIONS: RubricDimension[] = [
       "Did the AI accomplish the call's apparent objective: qualified the lead, completed the sale, scheduled a callback, or properly disqualified an unfit prospect?",
   },
 ];
+
+export const RUBRIC_DIMENSIONS: RubricDimension[] = BASE_DIMENSIONS.map((d) => ({
+  ...d,
+  min: DEFAULT_MIN,
+  max: DEFAULT_MAX,
+}));
+
+// ---- Per-agent rubric parsing / validation --------------------------------
+
+// Turn a free-text dimension name into a stable, unique key.
+function slugifyKey(source: string, taken: Set<string>): string {
+  let base = source
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40);
+  if (!base) base = "dimension";
+  let key = base;
+  let i = 2;
+  while (taken.has(key)) key = `${base}_${i++}`;
+  taken.add(key);
+  return key;
+}
+
+// Coerce arbitrary editor input into clean, valid dimensions. Drops rows with
+// no name, clamps ranges, ensures min < max and unique keys.
+export function sanitizeRubric(input: unknown): RubricDimension[] {
+  if (!Array.isArray(input)) return [];
+  const taken = new Set<string>();
+  const out: RubricDimension[] = [];
+  for (const item of input) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const name = String(o.name ?? "").trim();
+    if (!name) continue;
+    const criteria = String(o.criteria ?? "").trim();
+    let min = Math.round(Number(o.min));
+    let max = Math.round(Number(o.max));
+    if (!Number.isFinite(min)) min = DEFAULT_MIN;
+    if (!Number.isFinite(max)) max = DEFAULT_MAX;
+    if (min < 0) min = 0;
+    if (max > 100) max = 100;
+    if (max <= min) max = min + 1;
+    const provided =
+      typeof o.key === "string" && o.key.trim() ? o.key : name;
+    const key = slugifyKey(provided, taken);
+    out.push({ key, name, criteria, min, max });
+  }
+  return out.slice(0, 40);
+}
+
+// Parse a stored rubric_json column. Returns null when absent/empty/invalid so
+// callers fall back to the built-in RUBRIC_DIMENSIONS.
+export function parseRubricJson(
+  raw: string | null | undefined,
+): RubricDimension[] | null {
+  if (!raw) return null;
+  try {
+    const dims = sanitizeRubric(JSON.parse(raw));
+    return dims.length > 0 ? dims : null;
+  } catch {
+    return null;
+  }
+}
 
 export type AuditPreset = {
   key: string;
@@ -154,7 +225,7 @@ AUDIT FOCUS:
 {focus_block}
 
 SCORING:
-- Score each dimension 1 (poor) to 5 (excellent).
+- Score each dimension ONLY within the range shown beside it in the RUBRIC below, written as [score MIN-MAX]. The MIN is the worst, the MAX is the best. Use the full range; never go below a dimension's MIN or above its MAX.
 - {strictness_block}
 - Give a 1-2 sentence rationale grounded in evidence. For any non-null score, quote at least one timestamp [MM:SS] from the transcript so the audit is verifiable. Do not invent timestamps; if the transcript lacks them, paraphrase the specific moment.
 - If a dimension is genuinely not applicable (e.g. no objection was raised), score it null and say so in the rationale.
@@ -174,7 +245,7 @@ Be specific, fair, and direct. Indian fintech compliance standards apply. Do not
 Respond with VALID JSON ONLY matching this exact shape:
 {
   "scores": {
-    <dimension_key>: { "score": <1-5 or null>, "rationale": "<string>" }
+    <dimension_key>: { "score": <integer within that dimension's MIN-MAX, or null>, "rationale": "<string>" }
   },
   "overall_score": <1-5>,
   "summary": "<string>",
@@ -183,11 +254,16 @@ Respond with VALID JSON ONLY matching this exact shape:
   "improvement_recommendations": [ "<string>", ... ]
 }`;
 
-function formatRubric(emphasisKeys: string[]): string {
-  return RUBRIC_DIMENSIONS.map((d) => {
-    const marker = emphasisKeys.includes(d.key) ? "  [PRIMARY FOCUS]" : "";
-    return `- ${d.key} (${d.name})${marker}: ${d.criteria}`;
-  }).join("\n");
+function formatRubric(
+  rubric: RubricDimension[],
+  emphasisKeys: string[],
+): string {
+  return rubric
+    .map((d) => {
+      const marker = emphasisKeys.includes(d.key) ? "  [PRIMARY FOCUS]" : "";
+      return `- ${d.key} (${d.name}) [score ${d.min}-${d.max}]${marker}: ${d.criteria}`;
+    })
+    .join("\n");
 }
 
 export function buildSystemPrompt(opts: {
@@ -196,7 +272,10 @@ export function buildSystemPrompt(opts: {
   customFocus?: string;
   agentName?: string;
   knowledgeBase?: string;
+  rubric?: RubricDimension[];
 }): string {
+  const rubric =
+    opts.rubric && opts.rubric.length > 0 ? opts.rubric : RUBRIC_DIMENSIONS;
   const p =
     AUDIT_PRESETS[opts.preset ?? "general"] ?? AUDIT_PRESETS.general;
   const parts = [p.instructions];
@@ -210,7 +289,7 @@ export function buildSystemPrompt(opts: {
 
   let prompt = SYSTEM_PROMPT_TEMPLATE.replace("{focus_block}", focus_block)
     .replace("{strictness_block}", strictness_block)
-    .replace("{rubric}", formatRubric(p.emphasis_keys));
+    .replace("{rubric}", formatRubric(rubric, p.emphasis_keys));
 
   // Ground the audit in the agent's own knowledge base so product-accuracy
   // and compliance are scored against documented truth, not the LLM's prior.

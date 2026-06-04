@@ -1,10 +1,24 @@
 import { AssemblyAI } from "assemblyai";
 import Anthropic from "@anthropic-ai/sdk";
 import { GoogleGenAI, Type } from "@google/genai";
-import { buildSystemPrompt, RUBRIC_DIMENSIONS } from "./rubric";
+import {
+  buildSystemPrompt,
+  RUBRIC_DIMENSIONS,
+  type RubricDimension,
+} from "./rubric";
+
+export type DimScore = {
+  score: number | null;
+  rationale: string;
+  // Snapshot of the rubric used, so the audit renders correctly even if the
+  // agent's rubric later changes.
+  name?: string;
+  min?: number;
+  max?: number;
+};
 
 export type EvaluationResult = {
-  scores: Record<string, { score: number | null; rationale: string }>;
+  scores: Record<string, DimScore>;
   overall_score: number;
   summary: string;
   strengths: string;
@@ -94,6 +108,33 @@ export async function fetchFormattedTranscript(transcriptId: string): Promise<{
 
 // Score a transcript using Gemini first, fall back to Claude. Returns the
 // provider that ultimately produced the evaluation so we can record it.
+// Force every dimension into its configured range, fill in missing ones, and
+// snapshot the rubric metadata (name/min/max) onto each score so the audit
+// detail page can render correctly regardless of later rubric edits.
+function enrichScores(
+  raw: Record<string, { score?: number | null; rationale?: string }> | undefined,
+  rubric: RubricDimension[],
+): Record<string, DimScore> {
+  const out: Record<string, DimScore> = {};
+  for (const d of rubric) {
+    const r = raw?.[d.key];
+    let s = r?.score ?? null;
+    if (typeof s === "number" && Number.isFinite(s)) {
+      s = Math.max(d.min, Math.min(d.max, Math.round(s)));
+    } else {
+      s = null;
+    }
+    out[d.key] = {
+      score: s,
+      rationale: r?.rationale ?? "",
+      name: d.name,
+      min: d.min,
+      max: d.max,
+    };
+  }
+  return out;
+}
+
 export async function scoreTranscript(opts: {
   transcript: string;
   preset?: string;
@@ -101,13 +142,18 @@ export async function scoreTranscript(opts: {
   customFocus?: string;
   agentName?: string;
   knowledgeBase?: string;
+  rubric?: RubricDimension[];
 }): Promise<AuditScored> {
+  const rubric =
+    opts.rubric && opts.rubric.length > 0 ? opts.rubric : RUBRIC_DIMENSIONS;
+
   const systemPrompt = buildSystemPrompt({
     preset: opts.preset,
     strictness: opts.strictness,
     customFocus: opts.customFocus,
     agentName: opts.agentName,
     knowledgeBase: opts.knowledgeBase,
+    rubric,
   });
 
   const explicit = (process.env.LLM_PROVIDER || "gemini").toLowerCase();
@@ -122,13 +168,19 @@ export async function scoreTranscript(opts: {
   let fallbackReason: string | null = null;
   for (const provider of order) {
     try {
+      let result: EvaluationResult | null = null;
       if (provider === "gemini" && process.env.GOOGLE_API_KEY) {
-        const result = await scoreWithGemini(systemPrompt, opts.transcript);
-        return { ...result, llm_provider: "gemini", llm_fallback_reason: fallbackReason };
+        result = await scoreWithGemini(systemPrompt, opts.transcript, rubric);
+      } else if (provider === "anthropic" && process.env.ANTHROPIC_API_KEY) {
+        result = await scoreWithClaude(systemPrompt, opts.transcript);
       }
-      if (provider === "anthropic" && process.env.ANTHROPIC_API_KEY) {
-        const result = await scoreWithClaude(systemPrompt, opts.transcript);
-        return { ...result, llm_provider: "anthropic", llm_fallback_reason: fallbackReason };
+      if (result) {
+        return {
+          ...result,
+          scores: enrichScores(result.scores, rubric),
+          llm_provider: provider,
+          llm_fallback_reason: fallbackReason,
+        };
       }
     } catch (err) {
       fallbackReason = `${provider} failed: ${
@@ -147,6 +199,7 @@ export async function scoreTranscript(opts: {
 async function scoreWithGemini(
   systemPrompt: string,
   transcript: string,
+  rubric: RubricDimension[],
 ): Promise<EvaluationResult> {
   const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY! });
   const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
@@ -162,10 +215,8 @@ async function scoreWithGemini(
 
   const scoresSchema = {
     type: Type.OBJECT,
-    properties: Object.fromEntries(
-      RUBRIC_DIMENSIONS.map((d) => [d.key, scoreBlock]),
-    ),
-    required: RUBRIC_DIMENSIONS.map((d) => d.key),
+    properties: Object.fromEntries(rubric.map((d) => [d.key, scoreBlock])),
+    required: rubric.map((d) => d.key),
   };
 
   const response = await ai.models.generateContent({

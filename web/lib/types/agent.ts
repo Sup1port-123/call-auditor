@@ -4,6 +4,7 @@ export type Agent = {
   target: string | null;
   description: string | null;
   knowledge_base: string | null;
+  rubric_json: string | null;
   created_at: string;
 };
 

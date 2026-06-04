@@ -2,6 +2,10 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import RubricEditor, {
+  defaultRubricRows,
+  type RubricRow,
+} from "../rubric-editor";
 
 type KbMode = "text" | "pdf";
 
@@ -12,6 +16,7 @@ export default function AgentForm() {
   const [kbMode, setKbMode] = useState<KbMode>("text");
   const [kbText, setKbText] = useState("");
   const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [rubric, setRubric] = useState<RubricRow[]>(defaultRubricRows);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,6 +34,7 @@ export default function AgentForm() {
       } else if (pdfFile) {
         form.set("pdf", pdfFile);
       }
+      form.set("rubric", JSON.stringify(rubric));
       const res = await fetch("/api/agents", { method: "POST", body: form });
       const raw = await res.text();
       let data: { id?: string; error?: string } = {};
@@ -127,6 +133,14 @@ export default function AgentForm() {
             </span>
           </label>
         )}
+      </Field>
+
+      <Field
+        index="04"
+        label="Scoring rubric"
+        hint="The dimensions Otis grades this agent on, and the min–max score range for each. Add, remove, or edit freely."
+      >
+        <RubricEditor value={rubric} onChange={setRubric} />
       </Field>
 
       {error && (

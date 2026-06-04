@@ -20,9 +20,13 @@ export type Audit = {
 };
 
 export type DimensionScore = {
-  score: number;
+  score: number | null;
   rationale?: string;
   evidence?: string[];
+  // Snapshot of the rubric used when the audit ran (newer audits only).
+  name?: string;
+  min?: number;
+  max?: number;
 };
 
 export type ParsedScores = Record<string, DimensionScore | number>;

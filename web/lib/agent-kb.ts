@@ -1,4 +1,19 @@
 import { extractText, getDocumentProxy } from "unpdf";
+import { sanitizeRubric } from "./rubric";
+
+// Read the `rubric` form field (a JSON string from the editor), validate it,
+// and return the JSON string to store — or null to mean "use the built-in
+// default rubric". Shared by the agent create + update routes.
+export function rubricJsonFromForm(form: FormData): string | null {
+  const raw = String(form.get("rubric") ?? "").trim();
+  if (!raw) return null;
+  try {
+    const dims = sanitizeRubric(JSON.parse(raw));
+    return dims.length > 0 ? JSON.stringify(dims) : null;
+  } catch {
+    return null;
+  }
+}
 
 // Postgres text columns reject the NUL byte (char code 0); PDF
 // extraction often emits it plus other C0 control chars. Drop every

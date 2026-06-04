@@ -257,16 +257,23 @@ function DimensionRow({
   name: string;
   value: DimensionScore | number;
 }) {
-  const score = typeof value === "number" ? value : value.score;
-  const rationale = typeof value === "number" ? null : value.rationale;
-  const pct =
-    score == null ? 0 : Math.max(0, Math.min(100, (score / 10) * 100));
+  const isObj = typeof value !== "number";
+  const score = isObj ? value.score : value;
+  const rationale = isObj ? value.rationale : null;
+  // Newer audits snapshot the rubric range; legacy ones default to 1–5.
+  const max = isObj && typeof value.max === "number" ? value.max : 5;
+  const label = isObj && value.name ? value.name : name.replace(/_/g, " ");
+
+  // Bar fills to score/max; tone keys off that fraction, not an absolute
+  // threshold, so it works for any custom range.
+  const frac = score == null || max <= 0 ? 0 : score / max;
+  const pct = Math.max(0, Math.min(100, frac * 100));
   const tone =
     score == null
       ? "bg-zinc-300"
-      : score >= 7
+      : frac >= 0.7
       ? "bg-gradient-to-r from-emerald-300 to-cyan-300"
-      : score >= 5
+      : frac >= 0.45
       ? "bg-gradient-to-r from-amber-300 to-orange-300"
       : "bg-gradient-to-r from-rose-300 to-pink-300";
 
@@ -274,10 +281,11 @@ function DimensionRow({
     <div>
       <div className="flex items-center justify-between mb-1.5">
         <div className="text-sm font-medium capitalize text-[var(--ink)]">
-          {name.replace(/_/g, " ")}
+          {label}
         </div>
         <div className="text-sm font-semibold tabular-nums text-zinc-700">
           {score ?? "—"}
+          <span className="text-zinc-400 font-normal"> / {max}</span>
         </div>
       </div>
       <div className="h-2 rounded-full bg-white overflow-hidden">

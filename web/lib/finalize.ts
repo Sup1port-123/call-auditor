@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAssemblyClient, scoreTranscript } from "@/lib/auditor";
+import { parseRubricJson, type RubricDimension } from "@/lib/rubric";
 
 type TranscriptLike = {
   status?: string;
@@ -106,14 +107,16 @@ export async function finalizeAudit(
 
   let agentName: string | undefined;
   let knowledgeBase: string | undefined;
+  let rubric: RubricDimension[] | undefined;
   if (audit.agent_id) {
     const { data: agent } = await supabase
       .from("agents")
-      .select("name, knowledge_base")
+      .select("name, knowledge_base, rubric_json")
       .eq("id", audit.agent_id)
       .maybeSingle();
     agentName = agent?.name ?? undefined;
     knowledgeBase = agent?.knowledge_base ?? undefined;
+    rubric = parseRubricJson(agent?.rubric_json) ?? undefined;
   }
 
   try {
@@ -124,6 +127,7 @@ export async function finalizeAudit(
       customFocus: audit.custom_focus ?? undefined,
       agentName,
       knowledgeBase,
+      rubric,
     });
     await supabase
       .from("audits")

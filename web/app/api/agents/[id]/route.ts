@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { resolveKnowledgeBase, sanitizeText } from "@/lib/agent-kb";
+import {
+  resolveKnowledgeBase,
+  sanitizeText,
+  rubricJsonFromForm,
+} from "@/lib/agent-kb";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -72,6 +76,7 @@ export async function PATCH(
         name,
         target: target || null,
         knowledge_base: knowledgeBase || null,
+        rubric_json: rubricJsonFromForm(form),
       })
       .eq("id", id)
       .select("id")
