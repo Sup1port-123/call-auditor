@@ -37,13 +37,14 @@ export async function GET(req: Request) {
     const filters = parseAuditFilters(sp);
 
     const supabase = await createClient();
+    // NOTE: keep this a single string literal — concatenating it with `+`
+    // defeats supabase-js's compile-time column parsing and the row type
+    // collapses to GenericStringError.
     const q = applyAuditFilters(
       supabase
         .from("audits")
         .select(
-          "id, target, timestamp, audited_at, duration_seconds, overall_score, " +
-            "llm_provider, summary, scores_json, strengths, what_was_lacking, " +
-            "recommendations_json, transcript",
+          "id, target, timestamp, audited_at, duration_seconds, overall_score, llm_provider, summary, scores_json, strengths, what_was_lacking, recommendations_json, transcript",
         ),
       filters,
     );
