@@ -131,6 +131,7 @@ export async function finalizeAudit(
         status: "completed",
         transcript: transcriptText,
         duration_seconds: durationSeconds,
+        audited_at: new Date().toISOString(),
         llm_provider: evaluation.llm_provider,
         llm_fallback_reason: evaluation.llm_fallback_reason,
         overall_score: evaluation.overall_score,
@@ -152,6 +153,7 @@ export async function finalizeAudit(
         status: "failed",
         transcript: transcriptText,
         duration_seconds: durationSeconds,
+        audited_at: new Date().toISOString(),
         error_message: `LLM scoring failed: ${message}`,
       })
       .eq("id", auditId);

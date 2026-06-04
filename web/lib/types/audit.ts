@@ -16,6 +16,7 @@ export type Audit = {
   recommendations_json: string | null;
   transcript: string | null;
   duration_seconds: number | null;
+  audited_at: string | null;
 };
 
 export type DimensionScore = {

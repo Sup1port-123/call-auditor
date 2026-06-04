@@ -114,6 +114,61 @@ export function callIdOrClause(f: AuditFilters): string | null {
   return f.callIds.map((id) => `target.ilike.*${id}*`).join(",");
 }
 
+// Minimal structural shape of a Supabase/PostgREST filter builder — enough
+// to apply the audit filters without importing the concrete generic type.
+// PostgrestFilterBuilder satisfies this (each method returns the builder).
+export interface AuditFilterableQuery<T> {
+  gte(column: string, value: number | string): T;
+  lte(column: string, value: number | string): T;
+  gt(column: string, value: number | string): T;
+  lt(column: string, value: number | string): T;
+  eq(column: string, value: number | string): T;
+  or(filters: string): T;
+}
+
+// Apply every active filter to a query. Shared by the dashboard page and the
+// Excel export route so they always agree on what "matching" means. Must be
+// called BEFORE .order()/.limit() — those drop the filter methods.
+export function applyAuditFilters<T extends AuditFilterableQuery<T>>(
+  query: T,
+  f: AuditFilters,
+): T {
+  let q = query;
+
+  const b = dateBounds(f);
+  if (b.gte) q = q.gte("timestamp", b.gte);
+  if (b.lte) q = q.lte("timestamp", b.lte);
+
+  const orClause = callIdOrClause(f);
+  if (orClause) q = q.or(orClause);
+
+  if (f.durOp) {
+    // Exclude nulls and the -1 "unknown" backfill sentinel.
+    q = q.gte("duration_seconds", 0);
+    const v = f.durMin;
+    if (f.durOp === "gt" && v != null) q = q.gt("duration_seconds", v);
+    else if (f.durOp === "lt" && v != null) q = q.lt("duration_seconds", v);
+    else if (f.durOp === "eq" && v != null) q = q.eq("duration_seconds", v);
+    else if (f.durOp === "between") {
+      if (f.durMin != null) q = q.gte("duration_seconds", f.durMin);
+      if (f.durMax != null) q = q.lte("duration_seconds", f.durMax);
+    }
+  }
+
+  if (f.scoreOp) {
+    const v = f.scoreMin;
+    if (f.scoreOp === "gt" && v != null) q = q.gt("overall_score", v);
+    else if (f.scoreOp === "lt" && v != null) q = q.lt("overall_score", v);
+    else if (f.scoreOp === "eq" && v != null) q = q.eq("overall_score", v);
+    else if (f.scoreOp === "between") {
+      if (f.scoreMin != null) q = q.gte("overall_score", f.scoreMin);
+      if (f.scoreMax != null) q = q.lte("overall_score", f.scoreMax);
+    }
+  }
+
+  return q;
+}
+
 // Format seconds as a compact duration. -1 / null → unknown.
 export function formatDuration(seconds: number | null | undefined): string {
   if (seconds == null || seconds < 0) return "—";

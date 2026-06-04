@@ -4,16 +4,8 @@ import Link from "next/link";
 import { motion } from "motion/react";
 import AnimatedCounter from "@/components/animated-counter";
 import DashboardFilters from "./dashboard-filters";
+import AuditsDataTable, { type DataRow } from "./audits-data-table";
 import { formatDuration, type RawParams } from "@/lib/audit-filters";
-
-type RecentRow = {
-  id: string;
-  timestamp: string;
-  target: string;
-  llm_provider: string | null;
-  overall_score: number | null;
-  duration_seconds: number | null;
-};
 
 export default function DashboardClient({
   filtered = false,
@@ -32,10 +24,21 @@ export default function DashboardClient({
   matchCount?: number;
   avgScore: number | null;
   avgDuration?: number | null;
-  recent: RecentRow[];
+  recent: DataRow[];
   filters: RawParams;
   error?: string | null;
 }) {
+  // Download reflects the current filter state — same params, server re-runs
+  // the query over the full matching set (not just the rows shown here).
+  const exportParams = new URLSearchParams(
+    Object.entries(filters).filter(
+      (e): e is [string, string] => typeof e[1] === "string" && e[1] !== "",
+    ),
+  ).toString();
+  const exportHref = `/api/audits/export${
+    exportParams ? `?${exportParams}` : ""
+  }`;
+
   return (
     <div className="px-10 lg:px-16 py-14 max-w-6xl">
       <motion.div
@@ -131,66 +134,35 @@ export default function DashboardClient({
             {filtered ? `Filtered audits (${recent.length})` : "Latest audits"}
           </h2>
         </div>
-        <Link
-          href="/audits"
-          className="text-sm font-medium text-zinc-600 hover:text-[var(--ink)] transition"
-        >
-          View all &rarr;
-        </Link>
+        <div className="flex items-center gap-4">
+          {recent.length > 0 && (
+            <a
+              href={exportHref}
+              className="inline-flex items-center gap-1.5 rounded-full bg-[var(--ink)] text-white px-4 py-2 text-sm font-medium hover:bg-zinc-800 transition shadow-[0_8px_24px_-12px_rgba(15,23,42,0.4)]"
+            >
+              <span aria-hidden>↓</span>
+              Download Excel
+            </a>
+          )}
+          <Link
+            href="/audits"
+            className="text-sm font-medium text-zinc-600 hover:text-[var(--ink)] transition"
+          >
+            View all &rarr;
+          </Link>
+        </div>
       </motion.div>
 
+      {filtered && (
+        <p className="text-xs text-zinc-500 mb-4">
+          Excel includes the full filtered set
+          {recent.length >= 50 ? "" : ` (${recent.length} rows)`}. The table
+          below shows the first 50.
+        </p>
+      )}
+
       {recent.length > 0 ? (
-        <motion.div
-          initial="hidden"
-          animate="visible"
-          variants={{
-            visible: { transition: { staggerChildren: 0.03 } },
-          }}
-          className="rounded-3xl bg-[var(--paper)] divide-y divide-white overflow-hidden"
-        >
-          {recent.map((row) => (
-            <motion.div
-              key={row.id}
-              variants={{
-                hidden: { opacity: 0, y: 8 },
-                visible: { opacity: 1, y: 0 },
-              }}
-              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-            >
-              <Link
-                href={`/audits/${row.id}`}
-                className="flex items-center justify-between px-6 py-4 hover:bg-white transition group"
-              >
-                <div className="min-w-0 flex-1 mr-6">
-                  <div className="text-[15px] font-medium truncate text-[var(--ink)] group-hover:text-black">
-                    {row.target}
-                  </div>
-                  <div className="text-xs text-zinc-500 mt-1 flex items-center gap-2 flex-wrap">
-                    <span>{new Date(row.timestamp).toLocaleString()}</span>
-                    {row.duration_seconds != null &&
-                      row.duration_seconds >= 0 && (
-                        <>
-                          <span className="text-zinc-300">·</span>
-                          <span className="tabular-nums">
-                            {formatDuration(row.duration_seconds)}
-                          </span>
-                        </>
-                      )}
-                    {row.llm_provider && (
-                      <>
-                        <span className="text-zinc-300">·</span>
-                        <span className="rounded-full bg-white px-2 py-0.5 text-[10px] uppercase tracking-widest text-zinc-500 border border-zinc-200">
-                          {row.llm_provider}
-                        </span>
-                      </>
-                    )}
-                  </div>
-                </div>
-                <ScorePill score={row.overall_score} />
-              </Link>
-            </motion.div>
-          ))}
-        </motion.div>
+        <AuditsDataTable rows={recent} />
       ) : (
         <EmptyState filtered={filtered} />
       )}
@@ -310,25 +282,6 @@ function ProcessCard({
       <div className="font-display text-2xl font-bold mb-2">{title}</div>
       <p className="text-sm text-zinc-600 leading-relaxed">{body}</p>
     </motion.div>
-  );
-}
-
-function ScorePill({ score }: { score: number | null }) {
-  if (score == null) {
-    return <span className="text-xs text-zinc-400">unscored</span>;
-  }
-  const tone =
-    score >= 7
-      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-      : score >= 5
-      ? "bg-amber-50 text-amber-700 border-amber-200"
-      : "bg-rose-50 text-rose-700 border-rose-200";
-  return (
-    <span
-      className={`rounded-full border px-3 py-1.5 text-xs font-semibold tabular-nums ${tone}`}
-    >
-      {score}/10
-    </span>
   );
 }
 
