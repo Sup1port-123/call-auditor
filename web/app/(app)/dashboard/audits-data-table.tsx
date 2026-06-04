@@ -1,8 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
-import { motion } from "motion/react";
 import { formatDuration } from "@/lib/audit-filters";
+import {
+  parseScores,
+  parseRecommendations,
+  type DimensionScore,
+} from "@/lib/types/audit";
 
 export type DataRow = {
   id: string;
@@ -11,6 +16,12 @@ export type DataRow = {
   audited_at: string | null;
   duration_seconds: number | null;
   overall_score: number | null;
+  summary?: string | null;
+  scores_json?: string | null;
+  strengths?: string | null;
+  what_was_lacking?: string | null;
+  recommendations_json?: string | null;
+  transcript?: string | null;
 };
 
 function fmt(iso: string | null): { date: string; time: string } {
@@ -23,17 +34,17 @@ function fmt(iso: string | null): { date: string; time: string } {
   };
 }
 
+const COL_COUNT = 6;
+
 export default function AuditsDataTable({ rows }: { rows: DataRow[] }) {
+  const [openId, setOpenId] = useState<string | null>(null);
+
   return (
-    <motion.div
-      initial="hidden"
-      animate="visible"
-      variants={{ visible: { transition: { staggerChildren: 0.02 } } }}
-      className="rounded-3xl bg-[var(--paper)] overflow-x-auto"
-    >
-      <table className="w-full text-sm min-w-[720px]">
+    <div className="rounded-3xl bg-[var(--paper)] overflow-x-auto">
+      <table className="w-full text-sm min-w-[760px]">
         <thead>
           <tr className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+            <Th className="w-8" />
             <Th>Recording</Th>
             <Th>Uploaded</Th>
             <Th>Audited</Th>
@@ -44,62 +55,225 @@ export default function AuditsDataTable({ rows }: { rows: DataRow[] }) {
         <tbody>
           {rows.map((row, i) => {
             const up = fmt(row.timestamp);
-            // Old audits have no audited_at — fall back to the upload time.
             const au = fmt(row.audited_at ?? row.timestamp);
             const hasDur =
               row.duration_seconds != null && row.duration_seconds >= 0;
+            const open = openId === row.id;
             return (
-              <motion.tr
+              <FragmentRow
                 key={row.id}
-                variants={{
-                  hidden: { opacity: 0, y: 6 },
-                  visible: { opacity: 1, y: 0 },
-                }}
-                transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-                className={`group ${i !== 0 ? "border-t border-white" : ""}`}
-              >
-                <Td>
-                  <Link
-                    href={`/audits/${row.id}`}
-                    className="block py-1 group-hover:text-black transition"
-                  >
-                    <div className="font-medium truncate max-w-[340px] text-[var(--ink)]">
-                      {row.target}
-                    </div>
-                  </Link>
-                </Td>
-                <Td className="text-zinc-500 whitespace-nowrap">
-                  <Link href={`/audits/${row.id}`} className="block py-1">
-                    <div>{up.date}</div>
-                    <div className="text-zinc-400 text-[11px] mt-0.5">
-                      {up.time}
-                    </div>
-                  </Link>
-                </Td>
-                <Td className="text-zinc-500 whitespace-nowrap">
-                  <Link href={`/audits/${row.id}`} className="block py-1">
-                    <div>{au.date}</div>
-                    <div className="text-zinc-400 text-[11px] mt-0.5">
-                      {au.time}
-                    </div>
-                  </Link>
-                </Td>
-                <Td className="text-right tabular-nums whitespace-nowrap text-zinc-600">
-                  <Link href={`/audits/${row.id}`} className="block py-1">
-                    {hasDur ? formatDuration(row.duration_seconds) : "—"}
-                  </Link>
-                </Td>
-                <Td className="text-right pr-6">
-                  <Link href={`/audits/${row.id}`} className="block py-1">
-                    <ScorePill score={row.overall_score} />
-                  </Link>
-                </Td>
-              </motion.tr>
+                row={row}
+                first={i === 0}
+                open={open}
+                onToggle={() => setOpenId(open ? null : row.id)}
+                up={up}
+                au={au}
+                hasDur={hasDur}
+              />
             );
           })}
         </tbody>
       </table>
-    </motion.div>
+    </div>
+  );
+}
+
+function FragmentRow({
+  row,
+  first,
+  open,
+  onToggle,
+  up,
+  au,
+  hasDur,
+}: {
+  row: DataRow;
+  first: boolean;
+  open: boolean;
+  onToggle: () => void;
+  up: { date: string; time: string };
+  au: { date: string; time: string };
+  hasDur: boolean;
+}) {
+  return (
+    <>
+      <tr
+        onClick={onToggle}
+        className={`group cursor-pointer hover:bg-white/60 transition ${
+          first ? "" : "border-t border-white"
+        } ${open ? "bg-white/60" : ""}`}
+      >
+        <Td className="text-zinc-400 text-center select-none">
+          <span
+            className={`inline-block transition-transform ${
+              open ? "rotate-90" : ""
+            }`}
+          >
+            ▸
+          </span>
+        </Td>
+        <Td>
+          <div className="font-medium truncate max-w-[320px] text-[var(--ink)]">
+            {row.target}
+          </div>
+        </Td>
+        <Td className="text-zinc-500 whitespace-nowrap">
+          <div>{up.date}</div>
+          <div className="text-zinc-400 text-[11px] mt-0.5">{up.time}</div>
+        </Td>
+        <Td className="text-zinc-500 whitespace-nowrap">
+          <div>{au.date}</div>
+          <div className="text-zinc-400 text-[11px] mt-0.5">{au.time}</div>
+        </Td>
+        <Td className="text-right tabular-nums whitespace-nowrap text-zinc-600">
+          {hasDur ? formatDuration(row.duration_seconds) : "—"}
+        </Td>
+        <Td className="text-right pr-6">
+          <ScorePill score={row.overall_score} />
+        </Td>
+      </tr>
+      {open && (
+        <tr className="border-t border-white">
+          <td colSpan={COL_COUNT} className="px-6 py-5 bg-white/70">
+            <AuditDetail row={row} />
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+function AuditDetail({ row }: { row: DataRow }) {
+  const scores = parseScores(row.scores_json ?? null);
+  const dims = Object.entries(scores);
+  const recs = parseRecommendations(row.recommendations_json ?? null);
+
+  return (
+    <div className="space-y-5 max-w-4xl">
+      {row.summary && (
+        <Block title="Summary">
+          <p className="text-sm text-zinc-700 leading-relaxed">{row.summary}</p>
+        </Block>
+      )}
+
+      {dims.length > 0 && (
+        <Block title="Dimensions">
+          <div className="space-y-3">
+            {dims.map(([key, val]) => (
+              <Dimension key={key} dimKey={key} val={val} />
+            ))}
+          </div>
+        </Block>
+      )}
+
+      {row.strengths && (
+        <Block title="Strengths" tone="text-emerald-700">
+          <p className="text-sm text-zinc-700 leading-relaxed whitespace-pre-line">
+            {row.strengths}
+          </p>
+        </Block>
+      )}
+
+      {row.what_was_lacking && (
+        <Block title="What was lacking" tone="text-rose-700">
+          <p className="text-sm text-zinc-700 leading-relaxed whitespace-pre-line">
+            {row.what_was_lacking}
+          </p>
+        </Block>
+      )}
+
+      {recs.length > 0 && (
+        <Block title="Recommendations">
+          <ol className="list-decimal pl-5 space-y-1">
+            {recs.map((r, i) => (
+              <li key={i} className="text-sm text-zinc-700 leading-relaxed">
+                {r}
+              </li>
+            ))}
+          </ol>
+        </Block>
+      )}
+
+      {row.transcript && (
+        <Block title="Transcript">
+          <pre className="text-xs text-zinc-600 leading-relaxed whitespace-pre-wrap font-mono max-h-72 overflow-y-auto rounded-xl bg-[var(--paper)] p-4">
+            {row.transcript}
+          </pre>
+        </Block>
+      )}
+
+      <Link
+        href={`/audits/${row.id}`}
+        className="inline-block text-sm font-medium text-[var(--sky-700)] hover:text-[var(--ink)] transition"
+      >
+        Open full audit &rarr;
+      </Link>
+    </div>
+  );
+}
+
+function Dimension({
+  dimKey,
+  val,
+}: {
+  dimKey: string;
+  val: DimensionScore | number;
+}) {
+  const isObj = typeof val !== "number";
+  const score = isObj ? val.score : val;
+  const rationale = isObj ? val.rationale : null;
+  const max = isObj && typeof val.max === "number" ? val.max : 5;
+  const label = isObj && val.name ? val.name : dimKey.replace(/_/g, " ");
+  const frac = score == null || max <= 0 ? 0 : score / max;
+  const tone =
+    score == null
+      ? "text-zinc-400"
+      : frac >= 0.7
+      ? "text-emerald-700"
+      : frac >= 0.45
+      ? "text-amber-700"
+      : "text-rose-700";
+
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-sm font-medium capitalize text-[var(--ink)]">
+          {label}
+        </span>
+        <span className={`text-sm font-semibold tabular-nums ${tone}`}>
+          {score ?? "—"}
+          <span className="text-zinc-400 font-normal"> / {max}</span>
+        </span>
+      </div>
+      {rationale && (
+        <p className="text-xs text-zinc-500 mt-0.5 leading-relaxed">
+          {rationale}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function Block({
+  title,
+  tone,
+  children,
+}: {
+  title: string;
+  tone?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <div
+        className={`text-[11px] uppercase tracking-[0.2em] font-semibold mb-2 ${
+          tone ?? "text-zinc-500"
+        }`}
+      >
+        {title}
+      </div>
+      {children}
+    </div>
   );
 }
 
@@ -107,7 +281,7 @@ function Th({
   children,
   className,
 }: {
-  children: React.ReactNode;
+  children?: React.ReactNode;
   className?: string;
 }) {
   return (
@@ -125,7 +299,7 @@ function Td({
   className?: string;
 }) {
   return (
-    <td className={`px-5 py-2 align-middle ${className ?? ""}`}>{children}</td>
+    <td className={`px-5 py-3 align-middle ${className ?? ""}`}>{children}</td>
   );
 }
 

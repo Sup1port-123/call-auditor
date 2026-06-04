@@ -14,8 +14,18 @@ export const revalidate = 0;
 // grows past this, the filtered count/averages would undercount.
 const FILTER_CAP = 2000;
 
-const LIST_COLUMNS =
+// How many rows the table renders (and fetches full insight for).
+const DISPLAY_LIMIT = 50;
+
+// Light columns — cheap to pull over the whole matching set for the stat cards.
+const LIGHT_COLUMNS =
   "id, timestamp, audited_at, target, llm_provider, overall_score, duration_seconds";
+
+// Full columns incl. the heavy insight fields — only for the displayed rows so
+// they can be expanded inline. MUST stay one string literal (supabase-js parses
+// it at compile time; `+` concatenation collapses the row type).
+const FULL_COLUMNS =
+  "id, timestamp, audited_at, target, llm_provider, overall_score, duration_seconds, summary, scores_json, strengths, what_was_lacking, recommendations_json, transcript";
 
 export default async function DashboardPage({
   searchParams,
@@ -28,26 +38,35 @@ export default async function DashboardPage({
   const filtered = hasAnyFilter(filters);
 
   if (filtered) {
-    // One query for the whole matching set; cards + list derive from it.
-    // Filters MUST be applied before .order()/.limit() — supabase-js drops the
-    // filter methods from the builder type once a transform is chained.
-    const q = applyAuditFilters(
-      supabase.from("audits").select(LIST_COLUMNS),
+    // Stats over the whole matching set (light columns only). Filters MUST be
+    // applied before .order()/.limit() — supabase-js drops the filter methods
+    // from the builder type once a transform is chained.
+    const statsQuery = applyAuditFilters(
+      supabase.from("audits").select(LIGHT_COLUMNS),
       filters,
     );
-
-    const { data, error } = await q
+    const { data: statsData, error: statsError } = await statsQuery
       .order("timestamp", { ascending: false })
       .limit(FILTER_CAP);
-    const rows = data ?? [];
+    const all = statsData ?? [];
 
-    const scored = rows.filter((r) => r.overall_score != null);
+    // Display rows with full insight (top N) — fetched separately so the heavy
+    // columns aren't pulled across the whole matching set.
+    const displayQuery = applyAuditFilters(
+      supabase.from("audits").select(FULL_COLUMNS),
+      filters,
+    );
+    const { data: displayData, error: displayError } = await displayQuery
+      .order("timestamp", { ascending: false })
+      .limit(DISPLAY_LIMIT);
+
+    const scored = all.filter((r) => r.overall_score != null);
     const avgScore =
       scored.length > 0
         ? scored.reduce((a, r) => a + (r.overall_score ?? 0), 0) / scored.length
         : null;
 
-    const timed = rows.filter(
+    const timed = all.filter(
       (r) => r.duration_seconds != null && r.duration_seconds >= 0,
     );
     const avgDuration =
@@ -61,12 +80,12 @@ export default async function DashboardPage({
     return (
       <DashboardClient
         filtered
-        matchCount={rows.length}
+        matchCount={all.length}
         avgScore={avgScore}
         avgDuration={avgDuration}
-        recent={rows.slice(0, 50)}
+        recent={displayData ?? []}
         filters={sp}
-        error={error?.message ?? null}
+        error={(statsError ?? displayError)?.message ?? null}
       />
     );
   }
@@ -84,7 +103,7 @@ export default async function DashboardPage({
       supabase.from("audits").select("*", { count: "exact", head: true }),
       supabase
         .from("audits")
-        .select(LIST_COLUMNS)
+        .select(FULL_COLUMNS)
         .order("timestamp", { ascending: false })
         .limit(5),
     ]);
