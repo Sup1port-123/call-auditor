@@ -30,6 +30,12 @@ function clip(s: string): string {
   return s.length > CELL_MAX ? `${s.slice(0, CELL_MAX)}…[truncated]` : s;
 }
 
+function reviewLabel(v: unknown): string {
+  if (v === "reviewed") return "Reviewed";
+  if (v === "flagged") return "Flagged";
+  return "Not reviewed";
+}
+
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
@@ -44,7 +50,7 @@ export async function GET(req: Request) {
       supabase
         .from("audits")
         .select(
-          "id, target, timestamp, audited_at, duration_seconds, overall_score, llm_provider, summary, scores_json, strengths, what_was_lacking, recommendations_json, transcript",
+          "id, target, timestamp, audited_at, duration_seconds, overall_score, review_status, llm_provider, summary, scores_json, strengths, what_was_lacking, recommendations_json, transcript",
         ),
       filters,
     );
@@ -81,6 +87,7 @@ export async function GET(req: Request) {
       "Date of uploading",
       "Date of auditing",
       "Audit score",
+      "Review status",
       "Duration",
       "Duration (sec)",
       "Summary",
@@ -118,6 +125,7 @@ export async function GET(req: Request) {
         fmtDateTime(r.timestamp),
         fmtDateTime(r.audited_at ?? r.timestamp),
         r.overall_score ?? "",
+        reviewLabel(r.review_status),
         hasDur ? formatDuration(r.duration_seconds) : "",
         hasDur ? r.duration_seconds : "",
         clip(r.summary ?? ""),
@@ -137,6 +145,7 @@ export async function GET(req: Request) {
       { wch: 18 }, // uploaded
       { wch: 18 }, // audited
       { wch: 11 }, // score
+      { wch: 14 }, // review status
       { wch: 10 }, // duration
       { wch: 14 }, // duration sec
       { wch: 50 }, // summary
