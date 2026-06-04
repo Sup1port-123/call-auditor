@@ -17,7 +17,20 @@ export type Audit = {
   transcript: string | null;
   duration_seconds: number | null;
   audited_at: string | null;
+  review_status: ReviewStatus;
 };
+
+export type ReviewStatus = "reviewed" | "not_reviewed" | "flagged";
+
+export const REVIEW_STATUSES: ReviewStatus[] = [
+  "reviewed",
+  "not_reviewed",
+  "flagged",
+];
+
+export function isReviewStatus(v: unknown): v is ReviewStatus {
+  return v === "reviewed" || v === "not_reviewed" || v === "flagged";
+}
 
 export type DimensionScore = {
   score: number | null;

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import ReviewStatusControl from "../review-status";
 import { createClient } from "@/lib/supabase/server";
 import {
   parseScores,
@@ -124,6 +125,16 @@ export default async function AuditDetailPage({
                 {audit.strictness}
               </span>
             )}
+          </div>
+          <div className="flex items-center gap-3 mt-4">
+            <span className="text-[11px] uppercase tracking-[0.2em] text-zinc-400">
+              Review
+            </span>
+            <ReviewStatusControl
+              id={audit.id}
+              status={audit.review_status}
+              refresh
+            />
           </div>
         </div>
         <OverallScore score={audit.overall_score} />

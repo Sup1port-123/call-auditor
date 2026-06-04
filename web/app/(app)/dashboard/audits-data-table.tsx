@@ -7,7 +7,11 @@ import {
   parseScores,
   parseRecommendations,
   type DimensionScore,
+  type ReviewStatus,
 } from "@/lib/types/audit";
+import ReviewStatusControl, {
+  ReviewBadge,
+} from "../audits/review-status";
 
 export type DataRow = {
   id: string;
@@ -16,6 +20,7 @@ export type DataRow = {
   audited_at: string | null;
   duration_seconds: number | null;
   overall_score: number | null;
+  review_status?: ReviewStatus | null;
   summary?: string | null;
   scores_json?: string | null;
   strengths?: string | null;
@@ -116,6 +121,9 @@ function FragmentRow({
           <div className="font-medium truncate max-w-[320px] text-[var(--ink)]">
             {row.target}
           </div>
+          <div className="mt-1">
+            <ReviewBadge status={row.review_status} />
+          </div>
         </Td>
         <Td className="text-zinc-500 whitespace-nowrap">
           <div>{up.date}</div>
@@ -150,6 +158,10 @@ function AuditDetail({ row }: { row: DataRow }) {
 
   return (
     <div className="space-y-5 max-w-4xl">
+      <Block title="Review">
+        <ReviewStatusControl id={row.id} status={row.review_status} refresh />
+      </Block>
+
       {row.summary && (
         <Block title="Summary">
           <p className="text-sm text-zinc-700 leading-relaxed">{row.summary}</p>

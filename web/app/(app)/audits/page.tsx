@@ -18,7 +18,7 @@ export default async function AuditsPage({
   let query = supabase
     .from("audits")
     .select(
-      "id, timestamp, target, preset, llm_provider, overall_score, summary",
+      "id, timestamp, target, preset, llm_provider, overall_score, summary, review_status",
     )
     .order("timestamp", { ascending: false })
     .limit(PAGE_SIZE);

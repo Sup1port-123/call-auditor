@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { motion } from "motion/react";
+import ReviewStatusControl from "./review-status";
+import type { ReviewStatus } from "@/lib/types/audit";
 
 type Row = {
   id: string;
@@ -11,6 +13,7 @@ type Row = {
   llm_provider: string | null;
   overall_score: number | null;
   summary: string | null;
+  review_status: ReviewStatus | null;
 };
 
 export default function AuditsTable({ rows }: { rows: Row[] }) {
@@ -30,6 +33,7 @@ export default function AuditsTable({ rows }: { rows: Row[] }) {
             <Th>Target</Th>
             <Th>Preset</Th>
             <Th>LLM</Th>
+            <Th>Review</Th>
             <Th className="text-right pr-6">Score</Th>
           </tr>
         </thead>
@@ -91,6 +95,12 @@ export default function AuditsTable({ rows }: { rows: Row[] }) {
                     "—"
                   )}
                 </Link>
+              </Td>
+              <Td>
+                <ReviewStatusControl
+                  id={row.id}
+                  status={row.review_status}
+                />
               </Td>
               <Td className="text-right pr-6">
                 <Link href={`/audits/${row.id}`} className="block py-1">

@@ -19,13 +19,13 @@ const DISPLAY_LIMIT = 50;
 
 // Light columns — cheap to pull over the whole matching set for the stat cards.
 const LIGHT_COLUMNS =
-  "id, timestamp, audited_at, target, llm_provider, overall_score, duration_seconds";
+  "id, timestamp, audited_at, target, llm_provider, overall_score, duration_seconds, review_status";
 
 // Full columns incl. the heavy insight fields — only for the displayed rows so
 // they can be expanded inline. MUST stay one string literal (supabase-js parses
 // it at compile time; `+` concatenation collapses the row type).
 const FULL_COLUMNS =
-  "id, timestamp, audited_at, target, llm_provider, overall_score, duration_seconds, summary, scores_json, strengths, what_was_lacking, recommendations_json, transcript";
+  "id, timestamp, audited_at, target, llm_provider, overall_score, duration_seconds, review_status, summary, scores_json, strengths, what_was_lacking, recommendations_json, transcript";
 
 export default async function DashboardPage({
   searchParams,

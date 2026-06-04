@@ -16,6 +16,7 @@ type State = {
   scoreOp: string;
   scoreMin: string;
   scoreMax: string;
+  review: string[];
 };
 
 function initState(p: RawParams): State {
@@ -31,8 +32,15 @@ function initState(p: RawParams): State {
     scoreOp: p.scoreOp ?? "between",
     scoreMin: p.scoreMin ?? "",
     scoreMax: p.scoreMax ?? "",
+    review: p.review ? p.review.split(",").filter(Boolean) : [],
   };
 }
+
+const REVIEW_OPTIONS = [
+  { value: "reviewed", label: "Reviewed" },
+  { value: "not_reviewed", label: "Not reviewed" },
+  { value: "flagged", label: "Flagged" },
+];
 
 function buildQuery(s: State): string {
   const p = new URLSearchParams();
@@ -52,6 +60,7 @@ function buildQuery(s: State): string {
     if (s.scoreOp === "between" && s.scoreMax.trim())
       p.set("scoreMax", s.scoreMax.trim());
   }
+  if (s.review.length) p.set("review", s.review.join(","));
   return p.toString();
 }
 
@@ -93,7 +102,9 @@ export default function DashboardFilters({
   const callActive = !!s.callIds.trim();
   const durActive = !!(s.durOp && (s.durMin.trim() || s.durMax.trim()));
   const scoreActive = !!(s.scoreOp && (s.scoreMin.trim() || s.scoreMax.trim()));
-  const anyActive = dateActive || callActive || durActive || scoreActive;
+  const reviewActive = s.review.length > 0;
+  const anyActive =
+    dateActive || callActive || durActive || scoreActive || reviewActive;
 
   const dateSummary = dateActive
     ? [
@@ -120,6 +131,17 @@ export default function DashboardFilters({
   const callSummary = callActive
     ? `Call ID (${callCount})`
     : "Call ID";
+
+  const reviewSummary = reviewActive
+    ? `Review (${s.review.length})`
+    : "Review";
+
+  const toggleReview = (value: string) =>
+    set({
+      review: s.review.includes(value)
+        ? s.review.filter((v) => v !== value)
+        : [...s.review, value],
+    });
 
   return (
     <div className="relative mb-10">
@@ -151,6 +173,12 @@ export default function DashboardFilters({
           active={scoreActive}
           isOpen={open === "score"}
           onClick={() => setOpen(open === "score" ? null : "score")}
+        />
+        <Chip
+          label={reviewSummary}
+          active={reviewActive}
+          isOpen={open === "review"}
+          onClick={() => setOpen(open === "review" ? null : "review")}
         />
 
         {anyActive && (
@@ -341,6 +369,31 @@ export default function DashboardFilters({
                 <ResetRow
                   onReset={() => set({ scoreMin: "", scoreMax: "" })}
                 />
+              </Panel>
+            )}
+
+            {open === "review" && (
+              <Panel title="Review status" onApply={apply}>
+                <p className="text-xs text-zinc-500 mb-3">
+                  Show audits in any of the selected states.
+                </p>
+                <div className="space-y-2">
+                  {REVIEW_OPTIONS.map((o) => (
+                    <label
+                      key={o.value}
+                      className="flex items-center gap-3 rounded-xl bg-[var(--paper)] px-4 py-2.5 cursor-pointer hover:bg-[var(--paper-strong)] transition"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={s.review.includes(o.value)}
+                        onChange={() => toggleReview(o.value)}
+                        className="h-4 w-4 accent-[var(--ink)]"
+                      />
+                      <span className="text-sm">{o.label}</span>
+                    </label>
+                  ))}
+                </div>
+                <ResetRow onReset={() => set({ review: [] })} />
               </Panel>
             )}
           </div>

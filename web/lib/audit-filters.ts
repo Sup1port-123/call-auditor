@@ -26,7 +26,11 @@ export type AuditFilters = {
   scoreOp: RangeOp | null;
   scoreMin: number | null;
   scoreMax: number | null;
+  // Manual review state (any subset of reviewed/not_reviewed/flagged)
+  reviewStatuses: string[];
 };
+
+const REVIEW_VALUES = new Set(["reviewed", "not_reviewed", "flagged"]);
 
 export type RawParams = Record<string, string | undefined>;
 
@@ -71,6 +75,10 @@ export function parseAuditFilters(p: RawParams): AuditFilters {
     scoreOp: op(p.scoreOp),
     scoreMin: num(p.scoreMin),
     scoreMax: num(p.scoreMax),
+    reviewStatuses: (p.review ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => REVIEW_VALUES.has(s)),
   };
 }
 
@@ -81,7 +89,8 @@ export function hasAnyFilter(f: AuditFilters): boolean {
     f.to != null ||
     f.callIds.length > 0 ||
     (f.durOp != null && (f.durMin != null || f.durMax != null)) ||
-    (f.scoreOp != null && (f.scoreMin != null || f.scoreMax != null))
+    (f.scoreOp != null && (f.scoreMin != null || f.scoreMax != null)) ||
+    f.reviewStatuses.length > 0
   );
 }
 
@@ -125,6 +134,7 @@ interface FilterChain {
   lt(column: string, value: number | string): unknown;
   eq(column: string, value: number | string): unknown;
   or(filters: string): unknown;
+  in(column: string, values: readonly (number | string)[]): unknown;
 }
 
 // Apply every active filter to a query, then return the SAME query. Shared by
@@ -141,6 +151,8 @@ export function applyAuditFilters<T>(query: T, f: AuditFilters): T {
 
   const orClause = callIdOrClause(f);
   if (orClause) q.or(orClause);
+
+  if (f.reviewStatuses.length > 0) q.in("review_status", f.reviewStatuses);
 
   if (f.durOp) {
     // Exclude nulls and the -1 "unknown" backfill sentinel.
