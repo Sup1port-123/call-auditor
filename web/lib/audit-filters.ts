@@ -114,59 +114,59 @@ export function callIdOrClause(f: AuditFilters): string | null {
   return f.callIds.map((id) => `target.ilike.*${id}*`).join(",");
 }
 
-// Minimal structural shape of a Supabase/PostgREST filter builder — enough
-// to apply the audit filters without importing the concrete generic type.
-// PostgrestFilterBuilder satisfies this (each method returns the builder).
-export interface AuditFilterableQuery<T> {
-  gte(column: string, value: number | string): T;
-  lte(column: string, value: number | string): T;
-  gt(column: string, value: number | string): T;
-  lt(column: string, value: number | string): T;
-  eq(column: string, value: number | string): T;
-  or(filters: string): T;
+// Minimal, NON-recursive shape of a PostgREST filter builder. Kept tiny on
+// purpose: an F-bounded generic (<T extends Self<T>>) makes tsc instantiate
+// the giant PostgrestFilterBuilder type recursively and bail with "Type
+// instantiation is excessively deep and possibly infinite."
+interface FilterChain {
+  gte(column: string, value: number | string): unknown;
+  lte(column: string, value: number | string): unknown;
+  gt(column: string, value: number | string): unknown;
+  lt(column: string, value: number | string): unknown;
+  eq(column: string, value: number | string): unknown;
+  or(filters: string): unknown;
 }
 
-// Apply every active filter to a query. Shared by the dashboard page and the
-// Excel export route so they always agree on what "matching" means. Must be
-// called BEFORE .order()/.limit() — those drop the filter methods.
-export function applyAuditFilters<T extends AuditFilterableQuery<T>>(
-  query: T,
-  f: AuditFilters,
-): T {
-  let q = query;
+// Apply every active filter to a query, then return the SAME query. Shared by
+// the dashboard page and the Excel export route so they always agree on what
+// "matching" means. supabase-js filter methods mutate the builder in place and
+// return `this`, so we operate through a small cast and hand back the original
+// (fully-typed) builder. Must be called BEFORE .order()/.limit().
+export function applyAuditFilters<T>(query: T, f: AuditFilters): T {
+  const q = query as unknown as FilterChain;
 
   const b = dateBounds(f);
-  if (b.gte) q = q.gte("timestamp", b.gte);
-  if (b.lte) q = q.lte("timestamp", b.lte);
+  if (b.gte) q.gte("timestamp", b.gte);
+  if (b.lte) q.lte("timestamp", b.lte);
 
   const orClause = callIdOrClause(f);
-  if (orClause) q = q.or(orClause);
+  if (orClause) q.or(orClause);
 
   if (f.durOp) {
     // Exclude nulls and the -1 "unknown" backfill sentinel.
-    q = q.gte("duration_seconds", 0);
+    q.gte("duration_seconds", 0);
     const v = f.durMin;
-    if (f.durOp === "gt" && v != null) q = q.gt("duration_seconds", v);
-    else if (f.durOp === "lt" && v != null) q = q.lt("duration_seconds", v);
-    else if (f.durOp === "eq" && v != null) q = q.eq("duration_seconds", v);
+    if (f.durOp === "gt" && v != null) q.gt("duration_seconds", v);
+    else if (f.durOp === "lt" && v != null) q.lt("duration_seconds", v);
+    else if (f.durOp === "eq" && v != null) q.eq("duration_seconds", v);
     else if (f.durOp === "between") {
-      if (f.durMin != null) q = q.gte("duration_seconds", f.durMin);
-      if (f.durMax != null) q = q.lte("duration_seconds", f.durMax);
+      if (f.durMin != null) q.gte("duration_seconds", f.durMin);
+      if (f.durMax != null) q.lte("duration_seconds", f.durMax);
     }
   }
 
   if (f.scoreOp) {
     const v = f.scoreMin;
-    if (f.scoreOp === "gt" && v != null) q = q.gt("overall_score", v);
-    else if (f.scoreOp === "lt" && v != null) q = q.lt("overall_score", v);
-    else if (f.scoreOp === "eq" && v != null) q = q.eq("overall_score", v);
+    if (f.scoreOp === "gt" && v != null) q.gt("overall_score", v);
+    else if (f.scoreOp === "lt" && v != null) q.lt("overall_score", v);
+    else if (f.scoreOp === "eq" && v != null) q.eq("overall_score", v);
     else if (f.scoreOp === "between") {
-      if (f.scoreMin != null) q = q.gte("overall_score", f.scoreMin);
-      if (f.scoreMax != null) q = q.lte("overall_score", f.scoreMax);
+      if (f.scoreMin != null) q.gte("overall_score", f.scoreMin);
+      if (f.scoreMax != null) q.lte("overall_score", f.scoreMax);
     }
   }
 
-  return q;
+  return query;
 }
 
 // Format seconds as a compact duration. -1 / null → unknown.
