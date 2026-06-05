@@ -36,7 +36,9 @@ export async function GET(req: Request) {
 
     const buf = await buildAuditsXlsx(data ?? []);
     const stamp = new Date().toISOString().slice(0, 10);
-    return new NextResponse(buf, {
+    // Re-wrap so the body type is Uint8Array<ArrayBuffer> (a valid BodyInit);
+    // the builder's return type widens to Uint8Array<ArrayBufferLike>.
+    return new NextResponse(new Uint8Array(buf), {
       status: 200,
       headers: {
         "Content-Type":
