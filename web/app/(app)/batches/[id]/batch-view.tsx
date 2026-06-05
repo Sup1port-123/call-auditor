@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Batch } from "@/lib/types/batch";
@@ -37,11 +37,10 @@ export default function BatchView({
 }) {
   const router = useRouter();
   const [counts, setCounts] = useState<Counts>(() => tally(audits));
-  const startedRef = useRef(false);
+  const [runId, setRunId] = useState(0);
+  const [retrying, setRetrying] = useState(false);
 
   useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
     let cancelled = false;
 
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -87,7 +86,23 @@ export default function BatchView({
     return () => {
       cancelled = true;
     };
-  }, [batch.id, router]);
+  }, [batch.id, router, runId]);
+
+  async function handleRetry() {
+    if (retrying) return;
+    setRetrying(true);
+    try {
+      await fetch(`/api/batches/${batch.id}/retry`, { method: "POST" });
+      router.refresh();
+      // Restart the drive loop so the reset rows get processed.
+      setCounts((c) => ({ ...c, done: false }));
+      setRunId((n) => n + 1);
+    } catch {
+      // ignore — user can click again
+    } finally {
+      setRetrying(false);
+    }
+  }
 
   // Keep counts in sync when the server re-sends rows via router.refresh().
   useEffect(() => {
@@ -160,13 +175,29 @@ export default function BatchView({
           </div>
         </div>
         <ProgressBar counts={counts} />
-        <div className="flex flex-wrap gap-2 mt-4">
+        <div className="flex flex-wrap items-center gap-2 mt-4">
           <Chip label="Queued" n={counts.queued} tone="zinc" />
           <Chip label="Transcribing" n={counts.transcribing} tone="sky" />
           <Chip label="Scoring" n={counts.scoring} tone="violet" />
           <Chip label="Completed" n={counts.completed} tone="emerald" />
           <Chip label="Failed" n={counts.failed} tone="rose" />
+          {counts.failed > 0 && (
+            <button
+              type="button"
+              onClick={handleRetry}
+              disabled={retrying}
+              className="ml-auto rounded-full bg-[var(--ink)] text-white px-4 py-1.5 text-xs font-medium hover:bg-zinc-800 transition disabled:opacity-50"
+            >
+              {retrying ? "Retrying…" : `Retry failed (${counts.failed})`}
+            </button>
+          )}
         </div>
+        {counts.failed > 0 && !retrying && (
+          <p className="text-xs text-zinc-500 mt-3">
+            Re-runs only the failed recordings — already-transcribed ones are
+            just re-scored. Keep this tab open while they process.
+          </p>
+        )}
       </div>
 
       {/* rows */}
