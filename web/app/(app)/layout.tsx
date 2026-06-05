@@ -8,6 +8,7 @@ const NAV = [
   { href: "/batches", label: "Batches" },
   { href: "/agents", label: "Agents" },
   { href: "/new-audit", label: "New audit" },
+  { href: "/settings", label: "Settings" },
 ];
 
 export default function AppLayout({ children }: { children: ReactNode }) {
