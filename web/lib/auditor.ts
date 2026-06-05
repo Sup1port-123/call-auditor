@@ -156,20 +156,23 @@ export async function scoreTranscript(opts: {
     rubric,
   });
 
-  const explicit = (process.env.LLM_PROVIDER || "gemini").toLowerCase();
-
-  const order: string[] =
-    explicit === "anthropic"
-      ? ["anthropic", "gemini"]
-      : explicit === "gemini"
-      ? ["gemini", "anthropic"]
-      : ["gemini", "anthropic"];
+  // Default to OpenAI as the primary; the explicitly-named provider (via
+  // LLM_PROVIDER) goes first, the rest act as fallbacks. Each only runs if its
+  // API key is present, so unset providers are skipped cleanly.
+  const ALL_PROVIDERS = ["openai", "gemini", "anthropic"];
+  const explicit = (process.env.LLM_PROVIDER || "openai").toLowerCase();
+  const order = [
+    explicit,
+    ...ALL_PROVIDERS.filter((p) => p !== explicit),
+  ];
 
   let fallbackReason: string | null = null;
   for (const provider of order) {
     try {
       let result: EvaluationResult | null = null;
-      if (provider === "gemini" && process.env.GOOGLE_API_KEY) {
+      if (provider === "openai" && process.env.OPENAI_API_KEY) {
+        result = await scoreWithOpenAI(systemPrompt, opts.transcript);
+      } else if (provider === "gemini" && process.env.GOOGLE_API_KEY) {
         result = await scoreWithGemini(systemPrompt, opts.transcript, rubric);
       } else if (provider === "anthropic" && process.env.ANTHROPIC_API_KEY) {
         result = await scoreWithClaude(systemPrompt, opts.transcript);
@@ -192,8 +195,48 @@ export async function scoreTranscript(opts: {
 
   throw new Error(
     `Every configured LLM failed${fallbackReason ? ` (${fallbackReason})` : ""}. ` +
-      "Set ANTHROPIC_API_KEY or GOOGLE_API_KEY in the env.",
+      "Set OPENAI_API_KEY, GOOGLE_API_KEY, or ANTHROPIC_API_KEY in the env.",
   );
+}
+
+// Score via the OpenAI Chat Completions REST API (no SDK dependency). JSON
+// mode guarantees a parseable object; the system prompt already specifies the
+// exact shape, and enrichScores() fills/clamps anything missing afterward.
+async function scoreWithOpenAI(
+  systemPrompt: string,
+  transcript: string,
+): Promise<EvaluationResult> {
+  const apiKey = process.env.OPENAI_API_KEY!;
+  const model = process.env.OPENAI_MODEL || "gpt-4o";
+
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.2,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: `TRANSCRIPT:\n${transcript}` },
+      ],
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`OpenAI ${res.status}: ${body.slice(0, 300)}`);
+  }
+
+  const data = (await res.json()) as {
+    choices?: { message?: { content?: string } }[];
+  };
+  const text = data.choices?.[0]?.message?.content;
+  if (!text) throw new Error("OpenAI returned an empty response");
+  return parseJsonResponse(text);
 }
 
 async function scoreWithGemini(
