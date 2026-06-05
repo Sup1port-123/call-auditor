@@ -137,10 +137,14 @@ export default function SettingsForm({
         </div>
         <ol className="list-decimal pl-5 space-y-2 text-sm text-zinc-600 leading-relaxed">
           <li>
-            In Vercel, set env vars <code className="text-xs">RESEND_API_KEY</code>,{" "}
-            <code className="text-xs">REPORT_FROM_EMAIL</code> (a verified
-            sender, e.g. <code className="text-xs">Otis &lt;reports@gromo.in&gt;</code>),
-            and <code className="text-xs">CRON_SECRET</code> (any random string).
+            In Vercel, set <code className="text-xs">CRON_SECRET</code> (any
+            random string) and an email transport — either{" "}
+            <code className="text-xs">SMTP_USER</code> +{" "}
+            <code className="text-xs">SMTP_PASS</code> (a Gmail address + its
+            16-char app password), or{" "}
+            <code className="text-xs">RESEND_API_KEY</code> with a verified
+            domain. Set <code className="text-xs">REPORT_FROM_EMAIL</code> to the
+            sending address.
           </li>
           <li>
             Create a free job at <strong>cron-job.org</strong> that requests this

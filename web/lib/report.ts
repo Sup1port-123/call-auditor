@@ -60,9 +60,38 @@ async function sendReportEmail(opts: {
   filename: string;
   xlsx: Uint8Array;
 }): Promise<void> {
+  const smtpUser = process.env.SMTP_USER;
+  const smtpPass = process.env.SMTP_PASS;
+  const from = process.env.REPORT_FROM_EMAIL || smtpUser;
+
+  // Preferred when configured: Gmail (or any) SMTP via an app password — no
+  // domain verification needed, and Google signs it so it lands in inboxes.
+  if (smtpUser && smtpPass) {
+    const { createTransport } = await import("nodemailer");
+    const transport = createTransport({
+      service: "gmail",
+      auth: { user: smtpUser, pass: smtpPass },
+    });
+    await transport.sendMail({
+      from: from || smtpUser,
+      to: opts.to.join(", "),
+      subject: opts.subject,
+      html: opts.html,
+      attachments: [
+        { filename: opts.filename, content: Buffer.from(opts.xlsx) },
+      ],
+    });
+    return;
+  }
+
+  // Fallback: Resend HTTP API (needs a verified sender domain).
   const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.REPORT_FROM_EMAIL;
-  if (!apiKey) throw new Error("RESEND_API_KEY is not set");
+  if (!apiKey) {
+    throw new Error(
+      "No email transport configured. Set SMTP_USER + SMTP_PASS (Gmail app " +
+        "password) or RESEND_API_KEY.",
+    );
+  }
   if (!from) throw new Error("REPORT_FROM_EMAIL is not set");
 
   const base64 = Buffer.from(opts.xlsx).toString("base64");
