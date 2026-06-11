@@ -25,6 +25,7 @@ export default function AgentEditor({ agent }: { agent: Agent }) {
   const [kbText, setKbText] = useState(agent.knowledge_base ?? "");
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [rubric, setRubric] = useState<RubricRow[]>(initialRubric);
+  const [externalKeys, setExternalKeys] = useState(agent.external_keys ?? "");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,6 +37,7 @@ export default function AgentEditor({ agent }: { agent: Agent }) {
     setKbText(agent.knowledge_base ?? "");
     setPdfFile(null);
     setRubric(initialRubric());
+    setExternalKeys(agent.external_keys ?? "");
     setError(null);
     setEditing(true);
   }
@@ -55,6 +57,7 @@ export default function AgentEditor({ agent }: { agent: Agent }) {
         form.set("pdf", pdfFile);
       }
       form.set("rubric", JSON.stringify(rubric));
+      form.set("external_keys", externalKeys);
       const res = await fetch(`/api/agents/${agent.id}`, {
         method: "PATCH",
         body: form,
@@ -265,6 +268,20 @@ export default function AgentEditor({ agent }: { agent: Agent }) {
           hint="The dimensions Otis grades this agent on, and the min–max score range for each."
         >
           <RubricEditor value={rubric} onChange={setRubric} />
+        </Field>
+
+        <Field
+          index="05"
+          label="External IDs (for auto-ingestion)"
+          hint="Optional. Comma-separated identifiers from your call platform that route to this agent."
+        >
+          <input
+            type="text"
+            value={externalKeys}
+            onChange={(e) => setExternalKeys(e.target.value)}
+            placeholder="e.g. inbound_v2, karta-agent-17"
+            className="w-full rounded-2xl bg-[var(--paper)] border border-transparent focus:border-[var(--sky-500)] focus:bg-white px-5 py-3 text-sm focus:outline-none transition"
+          />
         </Field>
 
         {error && (
