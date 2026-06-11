@@ -25,9 +25,6 @@ export async function POST(req: Request) {
 
     const name = sanitizeText(String(form.get("name") ?? "").trim());
     const target = sanitizeText(String(form.get("target") ?? "").trim());
-    const externalKeys = sanitizeText(
-      String(form.get("external_keys") ?? "").trim(),
-    );
 
     if (!name) {
       return NextResponse.json(
@@ -76,7 +73,6 @@ export async function POST(req: Request) {
       description: null,
       knowledge_base: knowledgeBase || null,
       rubric_json: rubricJsonFromForm(form),
-      external_keys: externalKeys || null,
       created_at: new Date().toISOString(),
     });
 
