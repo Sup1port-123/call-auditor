@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { motion } from "motion/react";
 import ReviewStatusControl from "./review-status";
+import { istDateParts } from "@/lib/datetime";
 import type { ReviewStatus } from "@/lib/types/audit";
 
 type Row = {
@@ -29,7 +30,7 @@ export default function AuditsTable({ rows }: { rows: Row[] }) {
       <table className="w-full text-sm">
         <thead>
           <tr className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">
-            <Th>When</Th>
+            <Th>When (IST)</Th>
             <Th>Target</Th>
             <Th>Preset</Th>
             <Th>LLM</Th>
@@ -50,12 +51,9 @@ export default function AuditsTable({ rows }: { rows: Row[] }) {
             >
               <Td className="text-zinc-500 whitespace-nowrap">
                 <Link href={`/audits/${row.id}`} className="block py-1">
-                  <div>{new Date(row.timestamp).toLocaleDateString()}</div>
+                  <div>{istDateParts(row.timestamp).date}</div>
                   <div className="text-zinc-400 text-[11px] mt-0.5">
-                    {new Date(row.timestamp).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
+                    {istDateParts(row.timestamp).time}
                   </div>
                 </Link>
               </Td>

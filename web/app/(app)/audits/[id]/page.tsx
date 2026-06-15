@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import ReviewStatusControl from "../review-status";
+import { istDateTime } from "@/lib/datetime";
 import { createClient } from "@/lib/supabase/server";
 import {
   parseScores,
@@ -100,7 +101,7 @@ export default async function AuditDetailPage({
           </h1>
           <div className="flex flex-wrap items-center gap-2 mt-4 text-xs text-zinc-500">
             <span className="rounded-full bg-[var(--paper)] px-3 py-1">
-              {new Date(audit.timestamp).toLocaleString()}
+              {istDateTime(audit.timestamp)} IST
             </span>
             {agent && (
               <Link

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { istDateTime } from "@/lib/datetime";
 import type { Agent } from "@/lib/types/agent";
 import AgentEditor from "./agent-editor";
 
@@ -57,7 +58,7 @@ export default async function AgentDetailPage({
                     {a.target}
                   </div>
                   <div className="text-xs text-zinc-500 mt-0.5">
-                    {new Date(a.timestamp).toLocaleString()}
+                    {istDateTime(a.timestamp)} IST
                   </div>
                 </div>
                 <Score score={a.overall_score} />

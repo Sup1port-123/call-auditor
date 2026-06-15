@@ -1,5 +1,6 @@
 import { formatDuration } from "./audit-filters";
 import { parseScores, parseRecommendations } from "./types/audit";
+import { istStamp } from "./datetime";
 
 // Single string literal — concatenating with `+` defeats supabase-js's
 // compile-time column parsing (the row type collapses to GenericStringError).
@@ -25,11 +26,9 @@ export type AuditExportRow = {
 // Excel rejects cell text longer than 32,767 chars; keep a safety margin.
 const CELL_MAX = 32000;
 
+// IST, sortable — e.g. "2026-06-15 16:00".
 function fmtDateTime(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toISOString().slice(0, 16).replace("T", " ");
+  return istStamp(iso);
 }
 
 function clip(s: string): string {
@@ -67,8 +66,8 @@ export async function buildAuditsXlsx(
 
   const header = [
     "Recording URL",
-    "Date of uploading",
-    "Date of auditing",
+    "Date of uploading (IST)",
+    "Date of auditing (IST)",
     "Audit score",
     "Review status",
     "Duration",

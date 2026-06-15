@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { istDateTime } from "@/lib/datetime";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -81,7 +82,7 @@ export default async function BatchesPage() {
                   {b.label || "Untitled batch"}
                 </div>
                 <div className="text-xs text-zinc-500 mt-1">
-                  {new Date(b.created_at).toLocaleString()}
+                  {istDateTime(b.created_at)} IST
                 </div>
                 <div className="flex items-center gap-5 mt-5">
                   <Stat label="Recordings" value={String(b.total)} />

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { formatDuration } from "@/lib/audit-filters";
+import { istDateParts } from "@/lib/datetime";
 import {
   parseScores,
   parseRecommendations,
@@ -29,15 +30,8 @@ export type DataRow = {
   transcript?: string | null;
 };
 
-function fmt(iso: string | null): { date: string; time: string } {
-  if (!iso) return { date: "—", time: "" };
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return { date: "—", time: "" };
-  return {
-    date: d.toLocaleDateString(),
-    time: d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-  };
-}
+// Always IST, regardless of the viewer's machine timezone.
+const fmt = istDateParts;
 
 const COL_COUNT = 6;
 
@@ -51,8 +45,8 @@ export default function AuditsDataTable({ rows }: { rows: DataRow[] }) {
           <tr className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">
             <Th className="w-8" />
             <Th>Recording</Th>
-            <Th>Uploaded</Th>
-            <Th>Audited</Th>
+            <Th>Uploaded (IST)</Th>
+            <Th>Audited (IST)</Th>
             <Th className="text-right">Duration</Th>
             <Th className="text-right pr-6">Score</Th>
           </tr>
