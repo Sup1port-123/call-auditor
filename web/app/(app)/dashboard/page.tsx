@@ -37,6 +37,13 @@ export default async function DashboardPage({
   const filters = parseAuditFilters(sp);
   const filtered = hasAnyFilter(filters);
 
+  // Agents power the dashboard "Agent" filter dropdown.
+  const { data: agentOptions } = await supabase
+    .from("agents")
+    .select("id, name")
+    .order("created_at", { ascending: false });
+  const agents = agentOptions ?? [];
+
   if (filtered) {
     // Stats over the whole matching set (light columns only). Filters MUST be
     // applied before .order()/.limit() — supabase-js drops the filter methods
@@ -85,6 +92,7 @@ export default async function DashboardPage({
         avgDuration={avgDuration}
         recent={displayData ?? []}
         filters={sp}
+        agentOptions={agents}
         error={(statsError ?? displayError)?.message ?? null}
       />
     );
@@ -125,6 +133,7 @@ export default async function DashboardPage({
       avgScore={avgScore}
       recent={recent ?? []}
       filters={sp}
+      agentOptions={agents}
     />
   );
 }

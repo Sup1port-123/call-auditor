@@ -28,6 +28,8 @@ export type AuditFilters = {
   scoreMax: number | null;
   // Manual review state (any subset of reviewed/not_reviewed/flagged)
   reviewStatuses: string[];
+  // Agent ids (any subset of the configured agents)
+  agentIds: string[];
 };
 
 const REVIEW_VALUES = new Set(["reviewed", "not_reviewed", "flagged"]);
@@ -79,6 +81,11 @@ export function parseAuditFilters(p: RawParams): AuditFilters {
       .split(",")
       .map((s) => s.trim())
       .filter((s) => REVIEW_VALUES.has(s)),
+    agentIds: (p.agents ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 100),
   };
 }
 
@@ -90,7 +97,8 @@ export function hasAnyFilter(f: AuditFilters): boolean {
     f.callIds.length > 0 ||
     (f.durOp != null && (f.durMin != null || f.durMax != null)) ||
     (f.scoreOp != null && (f.scoreMin != null || f.scoreMax != null)) ||
-    f.reviewStatuses.length > 0
+    f.reviewStatuses.length > 0 ||
+    f.agentIds.length > 0
   );
 }
 
@@ -153,6 +161,8 @@ export function applyAuditFilters<T>(query: T, f: AuditFilters): T {
   if (orClause) q.or(orClause);
 
   if (f.reviewStatuses.length > 0) q.in("review_status", f.reviewStatuses);
+
+  if (f.agentIds.length > 0) q.in("agent_id", f.agentIds);
 
   if (f.durOp) {
     // Exclude nulls and the -1 "unknown" backfill sentinel.

@@ -17,6 +17,7 @@ type State = {
   scoreMin: string;
   scoreMax: string;
   review: string[];
+  agents: string[]; // selected agent ids
 };
 
 function initState(p: RawParams): State {
@@ -33,6 +34,7 @@ function initState(p: RawParams): State {
     scoreMin: p.scoreMin ?? "",
     scoreMax: p.scoreMax ?? "",
     review: p.review ? p.review.split(",").filter(Boolean) : [],
+    agents: p.agents ? p.agents.split(",").filter(Boolean) : [],
   };
 }
 
@@ -61,6 +63,7 @@ function buildQuery(s: State): string {
       p.set("scoreMax", s.scoreMax.trim());
   }
   if (s.review.length) p.set("review", s.review.join(","));
+  if (s.agents.length) p.set("agents", s.agents.join(","));
   return p.toString();
 }
 
@@ -73,8 +76,10 @@ const OPS = [
 
 export default function DashboardFilters({
   initial,
+  agentOptions,
 }: {
   initial: RawParams;
+  agentOptions: { id: string; name: string }[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -103,8 +108,14 @@ export default function DashboardFilters({
   const durActive = !!(s.durOp && (s.durMin.trim() || s.durMax.trim()));
   const scoreActive = !!(s.scoreOp && (s.scoreMin.trim() || s.scoreMax.trim()));
   const reviewActive = s.review.length > 0;
+  const agentActive = s.agents.length > 0;
   const anyActive =
-    dateActive || callActive || durActive || scoreActive || reviewActive;
+    dateActive ||
+    callActive ||
+    durActive ||
+    scoreActive ||
+    reviewActive ||
+    agentActive;
 
   const dateSummary = dateActive
     ? [
@@ -136,11 +147,20 @@ export default function DashboardFilters({
     ? `Review (${s.review.length})`
     : "Review";
 
+  const agentSummary = agentActive ? `Agent (${s.agents.length})` : "Agent";
+
   const toggleReview = (value: string) =>
     set({
       review: s.review.includes(value)
         ? s.review.filter((v) => v !== value)
         : [...s.review, value],
+    });
+
+  const toggleAgent = (id: string) =>
+    set({
+      agents: s.agents.includes(id)
+        ? s.agents.filter((v) => v !== id)
+        : [...s.agents, id],
     });
 
   return (
@@ -180,6 +200,14 @@ export default function DashboardFilters({
           isOpen={open === "review"}
           onClick={() => setOpen(open === "review" ? null : "review")}
         />
+        {agentOptions.length > 0 && (
+          <Chip
+            label={agentSummary}
+            active={agentActive}
+            isOpen={open === "agent"}
+            onClick={() => setOpen(open === "agent" ? null : "agent")}
+          />
+        )}
 
         {anyActive && (
           <button
@@ -394,6 +422,31 @@ export default function DashboardFilters({
                   ))}
                 </div>
                 <ResetRow onReset={() => set({ review: [] })} />
+              </Panel>
+            )}
+
+            {open === "agent" && (
+              <Panel title="Agent" onApply={apply}>
+                <p className="text-xs text-zinc-500 mb-3">
+                  Show audits run for any of the selected agents.
+                </p>
+                <div className="space-y-2 max-h-72 overflow-y-auto">
+                  {agentOptions.map((a) => (
+                    <label
+                      key={a.id}
+                      className="flex items-center gap-3 rounded-xl bg-[var(--paper)] px-4 py-2.5 cursor-pointer hover:bg-[var(--paper-strong)] transition"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={s.agents.includes(a.id)}
+                        onChange={() => toggleAgent(a.id)}
+                        className="h-4 w-4 accent-[var(--ink)]"
+                      />
+                      <span className="text-sm">{a.name}</span>
+                    </label>
+                  ))}
+                </div>
+                <ResetRow onReset={() => set({ agents: [] })} />
               </Panel>
             )}
           </div>

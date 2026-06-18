@@ -16,6 +16,7 @@ export default function DashboardClient({
   avgDuration = null,
   recent,
   filters,
+  agentOptions = [],
   error = null,
 }: {
   filtered?: boolean;
@@ -26,6 +27,7 @@ export default function DashboardClient({
   avgDuration?: number | null;
   recent: DataRow[];
   filters: RawParams;
+  agentOptions?: { id: string; name: string }[];
   error?: string | null;
 }) {
   // Download reflects the current filter state — same params, server re-runs
@@ -71,7 +73,7 @@ export default function DashboardClient({
         </Link>
       </motion.div>
 
-      <DashboardFilters initial={filters} />
+      <DashboardFilters initial={filters} agentOptions={agentOptions} />
 
       {error && (
         <div className="rounded-2xl border border-rose-200 bg-rose-50 text-rose-700 text-sm px-5 py-3 mb-6">
