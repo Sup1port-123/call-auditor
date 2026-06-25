@@ -10,8 +10,6 @@ import {
 export type DimScore = {
   score: number | null;
   rationale: string;
-  // Snapshot of the rubric used, so the audit renders correctly even if the
-  // agent's rubric later changes.
   name?: string;
   min?: number;
   max?: number;
@@ -39,25 +37,114 @@ export function getAssemblyClient() {
   return new AssemblyAI({ apiKey: key });
 }
 
-// Submit a recording URL for transcription with diarization. The webhook
-// fires on the configured URL when AssemblyAI finishes — we look up the
-// audit by transcript_id at that point.
-//
-// Calls the REST API directly rather than the SDK: AssemblyAI now requires
-// the `speech_models` field, and pinning the SDK version is fragile while
-// they keep changing the contract. universal-3-pro gives the best Hindi /
-// Hinglish coverage; universal-2 is the fallback.
+// ---------------------------------------------------------------------------
+// Whisper transcription (OpenAI) — synchronous alternative to AssemblyAI.
+// Used automatically when ASSEMBLYAI_API_KEY is not set.
+// Note: Whisper does not support speaker diarization.
+// ---------------------------------------------------------------------------
+async function submitTranscriptionWithWhisper(audioUrl: string): Promise<{
+  transcriptId: string;
+  transcript: string;
+  durationSeconds: number | null;
+}> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "No ASSEMBLYAI_API_KEY and no OPENAI_API_KEY — cannot transcribe. Set at least one.",
+    );
+  }
+
+  const audioRes = await fetch(audioUrl);
+  if (!audioRes.ok) {
+    throw new Error(
+      `Could not download audio (${audioRes.status}): ${audioUrl.slice(0, 120)}`,
+    );
+  }
+  const audioBuffer = await audioRes.arrayBuffer();
+
+  const urlPath = audioUrl.split("?")[0];
+  const ext = urlPath.split(".").pop()?.toLowerCase() ?? "mp3";
+  const MIME_MAP: Record<string, string> = {
+    mp3: "audio/mpeg",
+    mp4: "audio/mp4",
+    mpeg: "audio/mpeg",
+    mpga: "audio/mpeg",
+    m4a: "audio/m4a",
+    wav: "audio/wav",
+    webm: "audio/webm",
+  };
+  const mimeType = MIME_MAP[ext] ?? "audio/mpeg";
+
+  const form = new FormData();
+  form.append(
+    "file",
+    new Blob([audioBuffer], { type: mimeType }),
+    `audio.${ext}`,
+  );
+  form.append("model", "whisper-1");
+  form.append("response_format", "verbose_json");
+  form.append("timestamp_granularities[]", "segment");
+
+  const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: form,
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Whisper API error (${res.status}): ${body.slice(0, 300)}`);
+  }
+
+  const data = (await res.json()) as {
+    text: string;
+    duration?: number;
+    segments?: { start: number; text: string }[];
+  };
+
+  const transcript =
+    data.segments && data.segments.length > 0
+      ? data.segments
+          .map((seg) => {
+            const mm = String(Math.floor(seg.start / 60)).padStart(2, "0");
+            const ss = String(Math.floor(seg.start % 60)).padStart(2, "0");
+            return `[${mm}:${ss}] ${seg.text.trim()}`;
+          })
+          .join("\n")
+      : data.text;
+
+  const durationSeconds =
+    typeof data.duration === "number" ? Math.round(data.duration) : null;
+
+  const transcriptId = `whisper_${Date.now()}_${Math.random()
+    .toString(16)
+    .slice(2, 8)}`;
+
+  return { transcriptId, transcript, durationSeconds };
+}
+
+// ---------------------------------------------------------------------------
+// Submit a recording for transcription.
+// Auto-selects AssemblyAI when ASSEMBLYAI_API_KEY is set, else uses Whisper.
+// ---------------------------------------------------------------------------
 export async function submitTranscription(opts: {
   audioUrl: string;
   webhookUrl: string;
   auditId: string;
-}): Promise<{ transcriptId: string }> {
-  const key = process.env.ASSEMBLYAI_API_KEY;
-  if (!key) throw new Error("ASSEMBLYAI_API_KEY is not set");
+}): Promise<{
+  transcriptId: string;
+  transcript?: string;
+  durationSeconds?: number | null;
+}> {
+  const assemblyKey = process.env.ASSEMBLYAI_API_KEY;
+
+  if (!assemblyKey) {
+    return submitTranscriptionWithWhisper(opts.audioUrl);
+  }
 
   const res = await fetch("https://api.assemblyai.com/v2/transcript", {
     method: "POST",
-    headers: { authorization: key, "content-type": "application/json" },
+    headers: { authorization: assemblyKey, "content-type": "application/json" },
     body: JSON.stringify({
       audio_url: opts.audioUrl,
       speech_models: ["universal-3-pro", "universal-2"],
@@ -81,8 +168,6 @@ export async function submitTranscription(opts: {
   return { transcriptId: data.id };
 }
 
-// Pull the full transcript text with [MM:SS] timestamps + speaker labels.
-// Mirrors the auditor.py format that the prompt expects.
 export async function fetchFormattedTranscript(transcriptId: string): Promise<{
   text: string;
   raw: string;
@@ -106,11 +191,10 @@ export async function fetchFormattedTranscript(transcriptId: string): Promise<{
   return { text: formatted, raw: t.text ?? "" };
 }
 
-// Score a transcript using Gemini first, fall back to Claude. Returns the
-// provider that ultimately produced the evaluation so we can record it.
-// Force every dimension into its configured range, fill in missing ones, and
-// snapshot the rubric metadata (name/min/max) onto each score so the audit
-// detail page can render correctly regardless of later rubric edits.
+// ---------------------------------------------------------------------------
+// LLM Scoring
+// ---------------------------------------------------------------------------
+
 function enrichScores(
   raw: Record<string, { score?: number | null; rationale?: string }> | undefined,
   rubric: RubricDimension[],
@@ -156,15 +240,9 @@ export async function scoreTranscript(opts: {
     rubric,
   });
 
-  // Default to OpenAI as the primary; the explicitly-named provider (via
-  // LLM_PROVIDER) goes first, the rest act as fallbacks. Each only runs if its
-  // API key is present, so unset providers are skipped cleanly.
   const ALL_PROVIDERS = ["openai", "gemini", "anthropic"];
   const explicit = (process.env.LLM_PROVIDER || "openai").toLowerCase();
-  const order = [
-    explicit,
-    ...ALL_PROVIDERS.filter((p) => p !== explicit),
-  ];
+  const order = [explicit, ...ALL_PROVIDERS.filter((p) => p !== explicit)];
 
   let fallbackReason: string | null = null;
   for (const provider of order) {
@@ -199,9 +277,6 @@ export async function scoreTranscript(opts: {
   );
 }
 
-// Score via the OpenAI Chat Completions REST API (no SDK dependency). JSON
-// mode guarantees a parseable object; the system prompt already specifies the
-// exact shape, and enrichScores() fills/clamps anything missing afterward.
 async function scoreWithOpenAI(
   systemPrompt: string,
   transcript: string,
@@ -264,12 +339,7 @@ async function scoreWithGemini(
 
   const response = await ai.models.generateContent({
     model,
-    contents: [
-      {
-        role: "user",
-        parts: [{ text: `TRANSCRIPT:\n${transcript}` }],
-      },
-    ],
+    contents: [{ role: "user", parts: [{ text: `TRANSCRIPT:\n${transcript}` }] }],
     config: {
       systemInstruction: systemPrompt,
       responseMimeType: "application/json",
@@ -281,19 +351,9 @@ async function scoreWithGemini(
           summary: { type: Type.STRING },
           strengths: { type: Type.STRING },
           what_was_lacking: { type: Type.STRING },
-          improvement_recommendations: {
-            type: Type.ARRAY,
-            items: { type: Type.STRING },
-          },
+          improvement_recommendations: { type: Type.ARRAY, items: { type: Type.STRING } },
         },
-        required: [
-          "scores",
-          "overall_score",
-          "summary",
-          "strengths",
-          "what_was_lacking",
-          "improvement_recommendations",
-        ],
+        required: ["scores","overall_score","summary","strengths","what_was_lacking","improvement_recommendations"],
       },
       temperature: 0.2,
     },
@@ -315,9 +375,7 @@ async function scoreWithClaude(
     max_tokens: 4096,
     temperature: 0.2,
     system: systemPrompt,
-    messages: [
-      { role: "user", content: `TRANSCRIPT:\n${transcript}` },
-    ],
+    messages: [{ role: "user", content: `TRANSCRIPT:\n${transcript}` }],
   });
   const content = message.content.find((c) => c.type === "text");
   if (!content || content.type !== "text") {
@@ -327,7 +385,6 @@ async function scoreWithClaude(
 }
 
 function parseJsonResponse(text: string): EvaluationResult {
-  // Strip code-fence wrappers Claude sometimes adds even with no markdown.
   const cleaned = text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
   return JSON.parse(cleaned) as EvaluationResult;
-}
+  }
