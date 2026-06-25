@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { submitTranscription } from "@/lib/auditor";
+import { finalizeAudit } from "@/lib/finalize";
 
 export const runtime = "nodejs";
 
@@ -68,15 +69,27 @@ export async function POST(req: Request) {
 
   try {
     const webhookUrl = `${originFromRequest(req)}/api/audits/webhook`;
-    const { transcriptId } = await submitTranscription({
-      audioUrl,
-      webhookUrl,
-      auditId: id,
-    });
-    await supabase
-      .from("audits")
-      .update({ transcript_id: transcriptId })
-      .eq("id", id);
+    const { transcriptId, transcript, durationSeconds } =
+      await submitTranscription({
+        audioUrl,
+        webhookUrl,
+        auditId: id,
+      });
+
+    const updateFields: Record<string, unknown> = {
+      transcript_id: transcriptId,
+    };
+    if (transcript !== undefined) {
+      updateFields.transcript = transcript;
+      updateFields.duration_seconds = durationSeconds ?? null;
+    }
+    await supabase.from("audits").update(updateFields).eq("id", id);
+
+    if (transcript !== undefined) {
+      finalizeAudit(id).catch((err) =>
+        console.error("[otis] finalizeAudit error:", err),
+      );
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await supabase
@@ -84,7 +97,7 @@ export async function POST(req: Request) {
       .update({ status: "failed", error_message: message })
       .eq("id", id);
     return NextResponse.json(
-      { error: `AssemblyAI submission failed: ${message}` },
+      { error: `Transcription submission failed: ${message}` },
       { status: 502 },
     );
   }
