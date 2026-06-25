@@ -6,7 +6,6 @@ type TranscriptLike = {
   status?: string;
   error?: string | null;
   text?: string | null;
-  // AssemblyAI reports the recording length in seconds.
   audio_duration?: number | null;
   utterances?: { start?: number; speaker?: string; text?: string }[] | null;
 };
@@ -28,8 +27,10 @@ function formatTranscript(t: TranscriptLike): string {
 // and safe to call concurrently: it claims the row with a conditional
 // update, so overlapping pollers + the webhook can't double-score.
 //
-// This is the resilience path — it works whether or not the AssemblyAI
-// webhook ever reaches us.
+// Supports two transcription paths:
+//   - AssemblyAI (async): transcript_id is a normal AssemblyAI ID
+//   - Whisper (sync):     transcript_id starts with "whisper_" — the
+//     transcript text is already stored in the audit row.
 export async function finalizeAudit(
   auditId: string,
 ): Promise<{ status: string }> {
@@ -56,7 +57,6 @@ export async function finalizeAudit(
     .select("id");
 
   if (!claimed || claimed.length === 0) {
-    // Already being scored (or done) by someone else.
     const { data: fresh } = await supabase
       .from("audits")
       .select("status")
@@ -65,46 +65,68 @@ export async function finalizeAudit(
     return { status: fresh?.status ?? "unknown" };
   }
 
-  // Pull the transcript straight from AssemblyAI.
-  let t: TranscriptLike;
-  try {
-    t = (await getAssemblyClient().transcripts.get(
-      audit.transcript_id,
-    )) as TranscriptLike;
-  } catch {
-    // Couldn't reach AssemblyAI — revert so a later poll retries.
-    await supabase
+  // ---------------------------------------------------------------------------
+  // Fetch transcript — two paths depending on transcription provider.
+  // ---------------------------------------------------------------------------
+  let transcriptText: string;
+  let durationSeconds: number | null;
+
+  if (audit.transcript_id.startsWith("whisper_")) {
+    // Whisper path: transcript was stored synchronously during submission.
+    const { data: stored } = await supabase
       .from("audits")
-      .update({ status: "transcribing" })
-      .eq("id", auditId);
-    return { status: "transcribing" };
+      .select("transcript, duration_seconds")
+      .eq("id", auditId)
+      .maybeSingle();
+
+    transcriptText = stored?.transcript ?? "";
+    durationSeconds =
+      typeof stored?.duration_seconds === "number"
+        ? stored.duration_seconds
+        : null;
+  } else {
+    // AssemblyAI path: fetch from their API.
+    let t: TranscriptLike;
+    try {
+      t = (await getAssemblyClient().transcripts.get(
+        audit.transcript_id,
+      )) as TranscriptLike;
+    } catch {
+      await supabase
+        .from("audits")
+        .update({ status: "transcribing" })
+        .eq("id", auditId);
+      return { status: "transcribing" };
+    }
+
+    if (t.status === "error") {
+      await supabase
+        .from("audits")
+        .update({
+          status: "failed",
+          error_message: `Transcription failed: ${t.error ?? "unknown"}`,
+        })
+        .eq("id", auditId);
+      return { status: "failed" };
+    }
+    if (t.status !== "completed") {
+      await supabase
+        .from("audits")
+        .update({ status: "transcribing" })
+        .eq("id", auditId);
+      return { status: "transcribing" };
+    }
+
+    transcriptText = formatTranscript(t);
+    durationSeconds =
+      typeof t.audio_duration === "number" && t.audio_duration >= 0
+        ? Math.round(t.audio_duration)
+        : null;
   }
 
-  if (t.status === "error") {
-    await supabase
-      .from("audits")
-      .update({
-        status: "failed",
-        error_message: `Transcription failed: ${t.error ?? "unknown"}`,
-      })
-      .eq("id", auditId);
-    return { status: "failed" };
-  }
-  if (t.status !== "completed") {
-    // Still processing — put it back and let the next poll try again.
-    await supabase
-      .from("audits")
-      .update({ status: "transcribing" })
-      .eq("id", auditId);
-    return { status: "transcribing" };
-  }
-
-  const transcriptText = formatTranscript(t);
-  const durationSeconds =
-    typeof t.audio_duration === "number" && t.audio_duration >= 0
-      ? Math.round(t.audio_duration)
-      : null;
-
+  // ---------------------------------------------------------------------------
+  // Load agent knowledge base + rubric, then score.
+  // ---------------------------------------------------------------------------
   let agentName: string | undefined;
   let knowledgeBase: string | undefined;
   let rubric: RubricDimension[] | undefined;
@@ -163,4 +185,4 @@ export async function finalizeAudit(
       .eq("id", auditId);
     return { status: "failed" };
   }
-}
+  }
