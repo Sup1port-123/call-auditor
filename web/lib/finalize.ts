@@ -29,8 +29,8 @@ function formatTranscript(t: TranscriptLike): string {
 //
 // Supports two transcription paths:
 //   - AssemblyAI (async): transcript_id is a normal AssemblyAI ID
-//   - Whisper (sync):     transcript_id starts with "whisper_" — the
-//     transcript text is already stored in the audit row.
+//   - Sync (Deepgram/Sarvam/Whisper): transcript_id starts with "deepgram_",
+//     "sarvam_", or "whisper_" — transcript already stored in the audit row.
 export async function finalizeAudit(
   auditId: string,
 ): Promise<{ status: string }> {
@@ -71,8 +71,12 @@ export async function finalizeAudit(
   let transcriptText: string;
   let durationSeconds: number | null;
 
-  if (audit.transcript_id.startsWith("whisper_")) {
-    // Whisper path: transcript was stored synchronously during submission.
+  if (
+    audit.transcript_id.startsWith("whisper_") ||
+    audit.transcript_id.startsWith("sarvam_") ||
+    audit.transcript_id.startsWith("deepgram_")
+  ) {
+    // Sync transcription path (Whisper/Sarvam/Deepgram): transcript already stored.
     const { data: stored } = await supabase
       .from("audits")
       .select("transcript, duration_seconds")
@@ -85,13 +89,14 @@ export async function finalizeAudit(
         ? stored.duration_seconds
         : null;
   } else {
-    // AssemblyAI path: fetch from their API.
+    // AssemblyAI path: pull the transcript from their API.
     let t: TranscriptLike;
     try {
       t = (await getAssemblyClient().transcripts.get(
         audit.transcript_id,
       )) as TranscriptLike;
     } catch {
+      // Couldn't reach AssemblyAI — revert so a later poll retries.
       await supabase
         .from("audits")
         .update({ status: "transcribing" })
@@ -165,9 +170,7 @@ export async function finalizeAudit(
         scores_json: JSON.stringify(evaluation.scores),
         strengths: evaluation.strengths,
         what_was_lacking: evaluation.what_was_lacking,
-        recommendations_json: JSON.stringify(
-          evaluation.improvement_recommendations,
-        ),
+        recommendations_json: JSON.stringify(evaluation.improvement_recommendations),
       })
       .eq("id", auditId);
     return { status: "completed" };
@@ -185,4 +188,4 @@ export async function finalizeAudit(
       .eq("id", auditId);
     return { status: "failed" };
   }
-  }
+}
