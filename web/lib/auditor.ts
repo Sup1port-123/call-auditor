@@ -206,7 +206,7 @@ export async function submitTranscription(opts: {
   const assemblyKey = process.env.ASSEMBLYAI_API_KEY;
   const deepgramKey = process.env.DEEPGRAM_API_KEY;
   const sarvamKey = process.env.SARVAM_API_KEY;
-  if (deepgramKey) return submitTranscriptionWithDeepgram(opts.audioUrl);
+  if (!assemblyKey && deepgramKey) return submitTranscriptionWithDeepgram(opts.audioUrl);
   if (!assemblyKey && sarvamKey) return submitTranscriptionWithSarvam(opts.audioUrl);
   if (!assemblyKey) return submitTranscriptionWithWhisper(opts.audioUrl);
   const res = await fetch("https://api.assemblyai.com/v2/transcript", {
