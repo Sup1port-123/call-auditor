@@ -8,25 +8,29 @@ export const revalidate = 0;
 export default async function BatchesPage() {
   const supabase = await createClient();
 
-  const [{ data: batches }, { data: auditMeta }] = await Promise.all([
-    supabase
-      .from("batches")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(100),
-    supabase
-      .from("audits")
-      .select("batch_id, status, overall_score")
-      .not("batch_id", "is", null),
-  ]);
+  const [{ data: batches }, { data: auditMeta }, { data: agents }] =
+    await Promise.all([
+      supabase
+        .from("batches")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(100),
+      supabase
+        .from("audits")
+        .select("batch_id, status, overall_score")
+        .not("batch_id", "is", null),
+      supabase.from("agents").select("id, name"),
+    ]);
+
+  // Agent id to name lookup
+  const agentMap = new Map(
+    (agents ?? []).map((a) => [a.id, a.name])
+  );
 
   // Tally completed count + avg score per batch.
-  const tally = new Map<
-    string,
-    { completed: number; scoreSum: number; scoreN: number }
-  >();
+  const tally = new Map();
   for (const a of auditMeta ?? []) {
-    const bid = a.batch_id as string;
+    const bid = a.batch_id;
     if (!bid) continue;
     const t = tally.get(bid) ?? { completed: 0, scoreSum: 0, scoreN: 0 };
     if (a.status === "completed") t.completed += 1;
@@ -69,6 +73,7 @@ export default async function BatchesPage() {
             const avg =
               t && t.scoreN > 0 ? (t.scoreSum / t.scoreN).toFixed(1) : "—";
             const completed = t?.completed ?? 0;
+            const agentName = b.agent_id ? agentMap.get(b.agent_id) : null;
             return (
               <Link
                 key={b.id}
@@ -81,8 +86,18 @@ export default async function BatchesPage() {
                 <div className="font-display text-lg font-bold truncate pr-10">
                   {b.label || "Untitled batch"}
                 </div>
-                <div className="text-xs text-zinc-500 mt-1">
-                  {istDateTime(b.created_at)} IST
+                <div className="flex items-center gap-2 mt-1">
+                  <div className="text-xs text-zinc-500">
+                    {istDateTime(b.created_at)} IST
+                  </div>
+                  {agentName && (
+                    <>
+                      <span className="text-zinc-300">·</span>
+                      <div className="text-xs font-medium text-[var(--sky-700)] truncate">
+                        {agentName}
+                      </div>
+                    </>
+                  )}
                 </div>
                 <div className="flex items-center gap-5 mt-5">
                   <Stat label="Recordings" value={String(b.total)} />
@@ -108,7 +123,7 @@ export default async function BatchesPage() {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value }) {
   return (
     <div>
       <div className="text-[10px] uppercase tracking-widest text-zinc-400">
@@ -119,4 +134,4 @@ function Stat({ label, value }: { label: string; value: string }) {
       </div>
     </div>
   );
-}
+                }
