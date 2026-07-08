@@ -4,9 +4,15 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import LottiePlayer from "@/components/lottie-player";
 import { AUDIT_PRESETS, STRICTNESS_LEVELS } from "@/lib/rubric";
-import { detectUrlColumn } from "@/lib/types/batch";
+import { detectUrlColumn, detectCallIdColumn, detectMobileColumn } from "@/lib/types/batch";
 
 const MAX_URLS = 1000;
+
+type ParsedRow = {
+  url: string;
+  callId: string | null;
+  mobile: string | null;
+};
 
 export default function BatchForm({
   agents,
@@ -18,8 +24,10 @@ export default function BatchForm({
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
-  const [urls, setUrls] = useState<string[]>([]);
+  const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
   const [urlColumn, setUrlColumn] = useState<string | null>(null);
+  const [callIdColumn, setCallIdColumn] = useState<string | null>(null);
+  const [mobileColumn, setMobileColumn] = useState<string | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [parsing, setParsing] = useState(false);
 
@@ -33,8 +41,10 @@ export default function BatchForm({
   async function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0] ?? null;
     setFile(f);
-    setUrls([]);
+    setParsedRows([]);
     setUrlColumn(null);
+    setCallIdColumn(null);
+    setMobileColumn(null);
     setParseError(null);
     if (!f) return;
 
@@ -57,13 +67,20 @@ export default function BatchForm({
         );
       }
 
+      const callCol = detectCallIdColumn(headers);
+      const mobCol = detectMobileColumn(headers);
+
       const seen = new Set<string>();
-      const extracted: string[] = [];
+      const extracted: ParsedRow[] = [];
       for (const r of rows) {
         const v = String(r[col] ?? "").trim();
         if (/^https?:\/\//i.test(v) && !seen.has(v)) {
           seen.add(v);
-          extracted.push(v);
+          extracted.push({
+            url: v,
+            callId: callCol ? String(r[callCol] ?? "").trim() || null : null,
+            mobile: mobCol ? String(r[mobCol] ?? "").trim() || null : null,
+          });
         }
       }
       if (extracted.length === 0) {
@@ -75,7 +92,9 @@ export default function BatchForm({
         );
       }
       setUrlColumn(col);
-      setUrls(extracted);
+      setCallIdColumn(callCol);
+      setMobileColumn(mobCol);
+      setParsedRows(extracted);
     } catch (err) {
       setParseError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -89,7 +108,7 @@ export default function BatchForm({
       setError("Choose a CSV or Excel file first.");
       return;
     }
-    if (urls.length === 0) {
+    if (parsedRows.length === 0) {
       setError(parseError ?? "No valid URLs found in the file.");
       return;
     }
@@ -102,7 +121,11 @@ export default function BatchForm({
         body: JSON.stringify({
           filename: file.name,
           url_column: urlColumn,
-          urls,
+          rows: parsedRows.map((r) => ({
+            url: r.url,
+            call_id: r.callId,
+            mobile: r.mobile,
+          })),
           agent_id: agentId,
           preset,
           strictness,
@@ -136,7 +159,7 @@ export default function BatchForm({
           className="w-48 h-48"
         />
         <div className="font-display text-xl font-bold mt-2">
-          Queueing {urls.length} calls…
+          Queueing {parsedRows.length} calls…
         </div>
         <div className="text-zinc-500 text-sm mt-2">
           We&apos;ll send you to the batch page in a second.
@@ -150,7 +173,7 @@ export default function BatchForm({
       <Field
         index="01"
         label="Spreadsheet"
-        hint="CSV or Excel (.xlsx). Otis auto-detects the column holding recording URLs — name it something like recording_url, audio_url, or recording."
+        hint='CSV or Excel (.xlsx). Otis auto-detects recording_url, call_id, and mobile number columns.'
       >
         <input
           ref={fileRef}
@@ -194,11 +217,23 @@ export default function BatchForm({
             {parseError}
           </div>
         )}
-        {urls.length > 0 && urlColumn && (
-          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 text-emerald-800 text-sm px-4 py-3 mt-3">
-            Found{" "}
-            <strong className="tabular-nums">{urls.length}</strong>{" "}
-            recording URLs in column <strong>{urlColumn}</strong>.
+        {parsedRows.length > 0 && urlColumn && (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 text-emerald-800 text-sm px-4 py-3 mt-3 space-y-1">
+            <div>
+              Found{" "}
+              <strong className="tabular-nums">{parsedRows.length}</strong>{" "}
+              recording URLs in column <strong>{urlColumn}</strong>.
+            </div>
+            {callIdColumn && (
+              <div className="text-xs text-emerald-700">
+                ✓ Call ID column detected: <strong>{callIdColumn}</strong>
+              </div>
+            )}
+            {mobileColumn && (
+              <div className="text-xs text-emerald-700">
+                ✓ Mobile number column detected: <strong>{mobileColumn}</strong>
+              </div>
+            )}
           </div>
         )}
       </Field>
@@ -274,11 +309,11 @@ export default function BatchForm({
 
       <button
         type="submit"
-        disabled={submitting || parsing || urls.length === 0}
+        disabled={submitting || parsing || parsedRows.length === 0}
         className="w-full rounded-full bg-[var(--ink)] text-white py-3.5 text-sm font-medium hover:bg-zinc-800 transition disabled:opacity-50 shadow-[0_10px_30px_-12px_rgba(15,23,42,0.5)]"
       >
-        {urls.length > 0
-          ? `Queue ${urls.length} audits`
+        {parsedRows.length > 0
+          ? `Queue ${parsedRows.length} audits`
           : "Queue batch audit"}
       </button>
     </form>
