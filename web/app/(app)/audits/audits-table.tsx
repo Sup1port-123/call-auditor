@@ -143,17 +143,18 @@ function Td({
 
 function Score({ score }: { score: number | null }) {
   if (score == null) return <span className="text-xs text-zinc-400">—</span>;
+  const pct = Math.round(score * 20);
   const tone =
-    score >= 7
+    pct >= 70
       ? "text-emerald-600"
-      : score >= 5
+      : pct >= 50
       ? "text-amber-600"
       : "text-rose-600";
   return (
     <span
       className={`font-display font-extrabold tabular-nums text-2xl ${tone}`}
     >
-      {score}
+      {pct}%
     </span>
   );
 }
