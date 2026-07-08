@@ -11,13 +11,11 @@ export type ReportSettings = {
   updated_at: string | null;
 };
 
-// India Standard Time is a fixed UTC+5:30 (no DST), so we can shift the clock
-// directly rather than pulling in a tz library.
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
 export function istParts(nowMs = Date.now()): {
-  date: string; // YYYY-MM-DD in IST
-  minutes: number; // minutes since IST midnight
+  date: string;
+  minutes: number;
 } {
   const d = new Date(nowMs + IST_OFFSET_MS);
   return {
@@ -26,7 +24,6 @@ export function istParts(nowMs = Date.now()): {
   };
 }
 
-// UTC bounds for a given IST calendar day.
 export function istDayRangeUtc(istDate: string): { gte: string; lte: string } {
   return {
     gte: new Date(`${istDate}T00:00:00+05:30`).toISOString(),
@@ -34,7 +31,6 @@ export function istDayRangeUtc(istDate: string): { gte: string; lte: string } {
   };
 }
 
-// "HH:MM" → minutes since midnight, or null if malformed.
 export function parseHHMM(v: string | null | undefined): number | null {
   if (!v) return null;
   const m = /^(\d{1,2}):(\d{2})$/.exec(v.trim());
@@ -64,12 +60,15 @@ async function sendReportEmail(opts: {
   const smtpPass = process.env.SMTP_PASS;
   const from = process.env.REPORT_FROM_EMAIL || smtpUser;
 
-  // Preferred when configured: Gmail (or any) SMTP via an app password — no
-  // domain verification needed, and Google signs it so it lands in inboxes.
+  // Preferred: generic SMTP via Brevo (no domain verification needed).
+  // Set SMTP_USER (Brevo login), SMTP_PASS (Brevo SMTP key).
+  // SMTP_HOST defaults to smtp-relay.brevo.com, SMTP_PORT defaults to 587.
   if (smtpUser && smtpPass) {
     const { createTransport } = await import("nodemailer");
     const transport = createTransport({
-      service: "gmail",
+      host: process.env.SMTP_HOST || "smtp-relay.brevo.com",
+      port: Number(process.env.SMTP_PORT || "587"),
+      secure: false,
       auth: { user: smtpUser, pass: smtpPass },
     });
     await transport.sendMail({
@@ -88,8 +87,7 @@ async function sendReportEmail(opts: {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
     throw new Error(
-      "No email transport configured. Set SMTP_USER + SMTP_PASS (Gmail app " +
-        "password) or RESEND_API_KEY.",
+      "No email transport configured. Set SMTP_USER + SMTP_PASS (Brevo SMTP key) or RESEND_API_KEY.",
     );
   }
   if (!from) throw new Error("REPORT_FROM_EMAIL is not set");
@@ -116,8 +114,6 @@ async function sendReportEmail(opts: {
   }
 }
 
-// Build that IST day's audit report (same .xlsx as the dashboard download) and
-// email it to the recipients. Returns how many audits it covered.
 export async function generateAndSendReport(opts: {
   emails: string[];
   istDate: string;
