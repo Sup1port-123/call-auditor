@@ -313,17 +313,18 @@ function ScorePill({ score }: { score: number | null }) {
   if (score == null) {
     return <span className="text-xs text-zinc-400">unscored</span>;
   }
+  const pct = Math.round(score * 20);
   const tone =
-    score >= 7
+    pct >= 70
       ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-      : score >= 5
+      : pct >= 50
       ? "bg-amber-50 text-amber-700 border-amber-200"
       : "bg-rose-50 text-rose-700 border-rose-200";
   return (
     <span
       className={`rounded-full border px-3 py-1.5 text-xs font-semibold tabular-nums ${tone}`}
     >
-      {score}/10
+      {pct}%
     </span>
   );
 }
