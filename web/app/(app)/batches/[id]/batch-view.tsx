@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Batch } from "@/lib/types/batch";
@@ -39,6 +39,31 @@ export default function BatchView({
   const [counts, setCounts] = useState<Counts>(() => tally(audits));
   const [runId, setRunId] = useState(0);
   const [retrying, setRetrying] = useState(false);
+
+  // Filters
+  const [filterCallId, setFilterCallId] = useState("");
+  const [filterMobile, setFilterMobile] = useState("");
+  const [filterStatus, setFilterStatus] = useState("all");
+
+  const filteredAudits = useMemo(() => {
+    return audits.filter((a) => {
+      if (
+        filterCallId &&
+        !a.call_id?.toLowerCase().includes(filterCallId.toLowerCase())
+      )
+        return false;
+      if (
+        filterMobile &&
+        !a.mobile_number?.toLowerCase().includes(filterMobile.toLowerCase())
+      )
+        return false;
+      if (filterStatus !== "all" && a.status !== filterStatus) return false;
+      return true;
+    });
+  }, [audits, filterCallId, filterMobile, filterStatus]);
+
+  const hasFilters =
+    filterCallId !== "" || filterMobile !== "" || filterStatus !== "all";
 
   useEffect(() => {
     let cancelled = false;
@@ -95,7 +120,7 @@ export default function BatchView({
       setCounts((c) => ({ ...c, done: false }));
       setRunId((n) => n + 1);
     } catch {
-      // ignore — user can click again
+      // ignore
     } finally {
       setRetrying(false);
     }
@@ -196,49 +221,109 @@ export default function BatchView({
         )}
       </div>
 
+      {/* filters */}
+      <div className="rounded-3xl bg-[var(--paper)] px-5 py-4 mb-3 flex flex-wrap items-center gap-3">
+        <input
+          type="text"
+          placeholder="Search Call ID…"
+          value={filterCallId}
+          onChange={(e) => setFilterCallId(e.target.value)}
+          className="rounded-full border border-zinc-200 bg-white px-4 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-zinc-300 w-40"
+        />
+        <input
+          type="text"
+          placeholder="Search Mobile…"
+          value={filterMobile}
+          onChange={(e) => setFilterMobile(e.target.value)}
+          className="rounded-full border border-zinc-200 bg-white px-4 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-zinc-300 w-40"
+        />
+        <div className="flex flex-wrap gap-1.5">
+          {["all", "completed", "failed", "queued", "transcribing", "scoring"].map(
+            (s) => (
+              <button
+                key={s}
+                onClick={() => setFilterStatus(s)}
+                className={`rounded-full px-3 py-1 text-xs font-medium capitalize transition ${
+                  filterStatus === s
+                    ? "bg-zinc-800 text-white"
+                    : "bg-white border border-zinc-200 text-zinc-600 hover:bg-zinc-50"
+                }`}
+              >
+                {s === "all" ? "All" : s}
+              </button>
+            ),
+          )}
+        </div>
+        {hasFilters && (
+          <button
+            onClick={() => {
+              setFilterCallId("");
+              setFilterMobile("");
+              setFilterStatus("all");
+            }}
+            className="text-xs text-zinc-400 hover:text-zinc-600 transition"
+          >
+            ✕ Clear
+          </button>
+        )}
+        <span className="ml-auto text-xs text-zinc-400 tabular-nums">
+          {filteredAudits.length} / {audits.length}
+        </span>
+      </div>
+
       {/* rows */}
       <div className="rounded-3xl bg-[var(--paper)] overflow-hidden">
-        {audits.map((a, i) => (
-          <Link
-            key={a.id}
-            href={`/audits/${a.id}`}
-            className={`flex items-center gap-4 px-5 py-3 hover:bg-white transition ${
-              i !== 0 ? "border-t border-white" : ""
-            }`}
-          >
-            <StatusDot status={a.status} />
-            <div className="min-w-0 flex-1">
-              <div className="text-sm truncate text-[var(--ink)]">
-                {a.target}
-              </div>
-              <div className="flex items-center gap-3 mt-0.5 flex-wrap">
-                {a.call_id && (
-                  <span className="text-xs text-zinc-400">
-                    ID:{" "}
-                    <span className="text-zinc-600 font-medium">{a.call_id}</span>
-                  </span>
-                )}
-                {a.mobile_number && (
-                  <span className="text-xs text-zinc-400">
-                    📞{" "}
-                    <span className="text-zinc-600 font-medium">{a.mobile_number}</span>
-                  </span>
-                )}
-              </div>
-              {a.status === "failed" && a.error_message && (
-                <div className="text-xs text-rose-600 truncate">
-                  {a.error_message}
+        {filteredAudits.length === 0 ? (
+          <div className="px-5 py-10 text-center text-sm text-zinc-400">
+            No results match your filters.
+          </div>
+        ) : (
+          filteredAudits.map((a, i) => (
+            <Link
+              key={a.id}
+              href={`/audits/${a.id}`}
+              className={`flex items-center gap-4 px-5 py-3 hover:bg-white transition ${
+                i !== 0 ? "border-t border-white" : ""
+              }`}
+            >
+              <StatusDot status={a.status} />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm truncate text-[var(--ink)]">
+                  {a.target}
                 </div>
-              )}
-            </div>
-            <div className="text-xs text-zinc-500 w-24 text-right shrink-0">
-              {a.status ?? "—"}
-            </div>
-            <div className="w-10 text-right shrink-0">
-              <Score score={a.overall_score} />
-            </div>
-          </Link>
-        ))}
+                <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+                  {a.call_id && (
+                    <span className="text-xs text-zinc-400">
+                      ID:{" "}
+                      <span className="text-zinc-600 font-medium">
+                        {a.call_id}
+                      </span>
+                    </span>
+                  )}
+                  {a.mobile_number && (
+                    <span className="text-xs text-zinc-400">
+                      📞{" "}
+                      <span className="text-zinc-600 font-medium">
+                        {a.mobile_number}
+                      </span>
+                    </span>
+                  )}
+                </div>
+                {a.status === "failed" && a.error_message && (
+                  <div className="text-xs text-rose-600 truncate">
+                    {a.error_message}
+                  </div>
+                )}
+              </div>
+              <div className="text-xs text-zinc-500 w-24 text-right shrink-0">
+                {a.status ?? "—"}
+              </div>
+              <div className="w-10 text-right shrink-0">
+                <Score score={a.overall_score} />
+              </div>
+            </Link>
+          ))
+        )}
       </div>
     </div>
   );
@@ -267,10 +352,7 @@ function ProgressBar({ counts }: { counts: Counts }) {
       <div className="bg-emerald-400" style={{ width: seg(counts.completed) }} />
       <div className="bg-rose-400" style={{ width: seg(counts.failed) }} />
       <div className="bg-violet-400" style={{ width: seg(counts.scoring) }} />
-      <div
-        className="bg-sky-400"
-        style={{ width: seg(counts.transcribing) }}
-      />
+      <div className="bg-sky-400" style={{ width: seg(counts.transcribing) }} />
     </div>
   );
 }
