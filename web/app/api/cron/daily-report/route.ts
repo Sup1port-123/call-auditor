@@ -46,6 +46,14 @@ export async function GET(req: Request) {
       return NextResponse.json({ skipped: "disabled" });
     }
 
+    // Mon–Fri only (skip Saturday=6 and Sunday=0 in IST)
+    if (!force) {
+      const istDay = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" })).getDay();
+      if (istDay === 0 || istDay === 6) {
+        return NextResponse.json({ skipped: "weekend" });
+      }
+    }
+
     const emails = parseEmails(settings.emails);
     if (emails.length === 0) {
       return NextResponse.json({ skipped: "no recipients" });
