@@ -123,7 +123,7 @@ export default async function BatchesPage() {
   );
 }
 
-function Stat({ label, value }) {
+function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <div className="text-[10px] uppercase tracking-widest text-zinc-400">
