@@ -60,7 +60,7 @@ async function sendReportEmail(opts: {
   const smtpPass = process.env.SMTP_PASS;
   const from = process.env.REPORT_FROM_EMAIL || smtpUser;
 
-  // Preferred: generic SMTP via Brevo (no domain verification needed).
+   // Preferred: generic SMTP via Brevo (no domain verification needed).
   // Set SMTP_USER (Brevo login), SMTP_PASS (Brevo SMTP key).
   // SMTP_HOST defaults to smtp-relay.brevo.com, SMTP_PORT defaults to 587.
   if (smtpUser && smtpPass) {
