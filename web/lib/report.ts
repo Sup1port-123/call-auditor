@@ -71,6 +71,7 @@ async function sendReportEmail(opts: {
       secure: false,
       auth: { user: smtpUser, pass: smtpPass },
     });
+    try { await transport.verify(); } catch(e: any) { throw new Error("SMTP_USER=[" + smtpUser + "] " + String(e.message)); }
     await transport.sendMail({
       from: from || smtpUser,
       to: opts.to.join(", "),
