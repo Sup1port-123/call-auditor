@@ -71,8 +71,6 @@ export default function BatchView({
           break;
         }
 
-        // process() submits queued rows when any exist, otherwise
-        // finalizes transcribing ones — so we just keep calling it.
         try {
           await fetch(`/api/batches/${batch.id}/process`, { method: "POST" });
         } catch {
@@ -94,7 +92,6 @@ export default function BatchView({
     try {
       await fetch(`/api/batches/${batch.id}/retry`, { method: "POST" });
       router.refresh();
-      // Restart the drive loop so the reset rows get processed.
       setCounts((c) => ({ ...c, done: false }));
       setRunId((n) => n + 1);
     } catch {
@@ -104,7 +101,6 @@ export default function BatchView({
     }
   }
 
-  // Keep counts in sync when the server re-sends rows via router.refresh().
   useEffect(() => {
     setCounts((c) => ({ ...tally(audits), done: c.done }));
   }, [audits]);
@@ -214,6 +210,20 @@ export default function BatchView({
             <div className="min-w-0 flex-1">
               <div className="text-sm truncate text-[var(--ink)]">
                 {a.target}
+              </div>
+              <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+                {a.call_id && (
+                  <span className="text-xs text-zinc-400">
+                    ID:{" "}
+                    <span className="text-zinc-600 font-medium">{a.call_id}</span>
+                  </span>
+                )}
+                {a.mobile_number && (
+                  <span className="text-xs text-zinc-400">
+                    📞{" "}
+                    <span className="text-zinc-600 font-medium">{a.mobile_number}</span>
+                  </span>
+                )}
               </div>
               {a.status === "failed" && a.error_message && (
                 <div className="text-xs text-rose-600 truncate">
