@@ -9,6 +9,8 @@ export const revalidate = 0;
 export type BatchAuditRow = {
   id: string;
   target: string;
+  call_id: string | null;
+  mobile_number: string | null;
   status: string | null;
   overall_score: number | null;
   error_message: string | null;
@@ -34,7 +36,7 @@ export default async function BatchDetailPage({
 
   const { data: audits } = await supabase
     .from("audits")
-    .select("id, target, status, overall_score, error_message")
+    .select("id, target, call_id, mobile_number, status, overall_score, error_message")
     .eq("batch_id", id)
     .order("timestamp", { ascending: true });
 
