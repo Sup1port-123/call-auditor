@@ -62,8 +62,8 @@ export default function AuditsTable({ rows }: { rows: Row[] }) {
                   href={`/audits/${row.id}`}
                   className="block py-1 group-hover:text-black transition"
                 >
-                  <div className="font-medium truncate max-w-sm text-[var(--ink)]">
-                    {row.target}
+                  <div className="font-medium text-[var(--ink)]">
+                    Recording
                   </div>
                   {row.summary && (
                     <div className="text-zinc-500 text-xs truncate max-w-sm mt-0.5">
@@ -71,6 +71,14 @@ export default function AuditsTable({ rows }: { rows: Row[] }) {
                     </div>
                   )}
                 </Link>
+                {/^https?:\/\//.test(row.target) && (
+                  <audio
+                    controls
+                    className="w-full mt-1 max-w-xs"
+                    src={row.target}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                )}
               </Td>
               <Td className="text-zinc-600">
                 <Link href={`/audits/${row.id}`} className="block py-1">
