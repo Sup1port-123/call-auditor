@@ -88,7 +88,7 @@ export default async function DashboardPage({
       <DashboardClient
         filtered
         matchCount={all.length}
-        avgScore={avgScore}
+        avgScore={avgScore != null ? Math.round(avgScore * 20) + "%" : "—"}
         avgDuration={avgDuration}
         recent={displayData ?? []}
         filters={sp}
@@ -130,7 +130,7 @@ export default async function DashboardPage({
     <DashboardClient
       weekCount={weekCount ?? 0}
       totalCount={totalCount ?? 0}
-      avgScore={avgScore}
+      avgScore={avgScore != null ? Math.round(avgScore * 20) + "%" : "—"}
       recent={recent ?? []}
       filters={sp}
       agentOptions={agents}
