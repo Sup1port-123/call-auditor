@@ -88,7 +88,7 @@ export default async function DashboardPage({
       <DashboardClient
         filtered
         matchCount={all.length}
-        avgScore={avgScore != null ? Math.round(avgScore * 20) + "%" : "—"}
+        avgScore={avgScore}
         avgDuration={avgDuration}
         recent={displayData ?? []}
         filters={sp}
