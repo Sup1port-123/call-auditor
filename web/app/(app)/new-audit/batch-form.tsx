@@ -30,6 +30,7 @@ export default function BatchForm({
   const [mobileColumn, setMobileColumn] = useState<string | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [parsing, setParsing] = useState(false);
+  const [skippedCount, setSkippedCount] = useState(0);
 
   const [agentId, setAgentId] = useState(defaultAgentId);
   const [preset, setPreset] = useState("general");
@@ -46,6 +47,7 @@ export default function BatchForm({
     setCallIdColumn(null);
     setMobileColumn(null);
     setParseError(null);
+    setSkippedCount(0);
     if (!f) return;
 
     setParsing(true);
@@ -72,17 +74,22 @@ export default function BatchForm({
 
       const seen = new Set<string>();
       const extracted: ParsedRow[] = [];
+      let skipped = 0;
       for (const r of rows) {
         const v = String(r[col] ?? "").trim();
-        if (/^https?:\/\//i.test(v) && !seen.has(v)) {
-          seen.add(v);
-          extracted.push({
-            url: v,
-            callId: callCol ? String(r[callCol] ?? "").trim() || null : null,
-            mobile: mobCol ? String(r[mobCol] ?? "").trim() || null : null,
-          });
+        if (!/^https?:\/\//i.test(v) || seen.has(v)) continue;
+        if (String(r["call_status"] ?? "").toLowerCase() !== "ended") {
+          skipped++;
+          continue;
         }
+        seen.add(v);
+        extracted.push({
+          url: v,
+          callId: callCol ? String(r[callCol] ?? "").trim() || null : null,
+          mobile: mobCol ? String(r[mobCol] ?? "").trim() || null : null,
+        });
       }
+      setSkippedCount(skipped);
       if (extracted.length === 0) {
         throw new Error(`Column "${col}" has no valid http(s) URLs.`);
       }
@@ -220,9 +227,13 @@ export default function BatchForm({
         {parsedRows.length > 0 && urlColumn && (
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 text-emerald-800 text-sm px-4 py-3 mt-3 space-y-1">
             <div>
-              Found{" "}
               <strong className="tabular-nums">{parsedRows.length}</strong>{" "}
-              recording URLs in column <strong>{urlColumn}</strong>.
+              calls loaded from column <strong>{urlColumn}</strong>
+              {skippedCount > 0 && (
+                <span className="text-amber-600 ml-1">
+                  — {skippedCount} skipped (not ended)
+                </span>
+              )}.
             </div>
             {callIdColumn && (
               <div className="text-xs text-emerald-700">
