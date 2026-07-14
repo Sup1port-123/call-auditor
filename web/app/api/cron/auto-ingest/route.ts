@@ -77,15 +77,6 @@ function newAuditId(): string {
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
-    const secret = process.env.CRON_SECRET;
-    if (secret) {
-      const viaVercel = req.headers.get("authorization") === `Bearer ${secret}`;
-      const viaKey = url.searchParams.get("key") === secret;
-      if (!viaVercel && !viaKey) {
-        return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-      }
-    }
-
     const apiKey = process.env.KARTA_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
