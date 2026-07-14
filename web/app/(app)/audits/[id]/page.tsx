@@ -96,9 +96,16 @@ export default async function AuditDetailPage({
           <div className="text-xs uppercase tracking-[0.25em] text-[var(--sky-700)] font-semibold mb-3">
             Audit
           </div>
-          <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight break-all leading-[1.05]">
-            {audit.target}
+          <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05]">
+            Call Recording
           </h1>
+          {/^https?:\/\//.test(audit.target) && (
+            <audio
+              controls
+              className="w-full mt-4 rounded-xl"
+              src={audit.target}
+            />
+          )}
           <div className="flex flex-wrap items-center gap-2 mt-4 text-xs text-zinc-500">
             <span className="rounded-full bg-[var(--paper)] px-3 py-1">
               {istDateTime(audit.timestamp)} IST
@@ -209,10 +216,11 @@ function OverallScore({ score }: { score: number | null }) {
       </div>
     );
   }
+  const pct = Math.round(score * 20);
   const tone =
-    score >= 7
+    pct >= 70
       ? "from-emerald-400 to-cyan-400"
-      : score >= 5
+      : pct >= 50
       ? "from-amber-400 to-orange-400"
       : "from-rose-400 to-pink-400";
   return (
@@ -223,9 +231,8 @@ function OverallScore({ score }: { score: number | null }) {
       <div
         className={`font-display text-[7rem] md:text-[8rem] font-black leading-none tabular-nums bg-gradient-to-br ${tone} bg-clip-text text-transparent`}
       >
-        {score}
+        {pct}%
       </div>
-      <div className="text-xs text-zinc-500 mt-1 font-mono">/ 10</div>
     </div>
   );
 }
@@ -272,12 +279,9 @@ function DimensionRow({
   const isObj = typeof value !== "number";
   const score = isObj ? value.score : value;
   const rationale = isObj ? value.rationale : null;
-  // Newer audits snapshot the rubric range; legacy ones default to 1–5.
   const max = isObj && typeof value.max === "number" ? value.max : 5;
   const label = isObj && value.name ? value.name : name.replace(/_/g, " ");
 
-  // Bar fills to score/max; tone keys off that fraction, not an absolute
-  // threshold, so it works for any custom range.
   const frac = score == null || max <= 0 ? 0 : score / max;
   const pct = Math.max(0, Math.min(100, frac * 100));
   const tone =
@@ -310,4 +314,4 @@ function DimensionRow({
       )}
     </div>
   );
-}
+                  }
