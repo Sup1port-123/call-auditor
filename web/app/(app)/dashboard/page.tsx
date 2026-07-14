@@ -130,7 +130,7 @@ export default async function DashboardPage({
     <DashboardClient
       weekCount={weekCount ?? 0}
       totalCount={totalCount ?? 0}
-      avgScore={avgScore != null ? Math.round(avgScore * 20) + "%" : "—"}
+      avgScore={avgScore}
       recent={recent ?? []}
       filters={sp}
       agentOptions={agents}
