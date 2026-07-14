@@ -95,9 +95,9 @@ export default function DashboardClient({
             <KpiCard
               index="02"
               label="Avg score"
-              value={avgScore}
-              decimals={1}
-              suffix={avgScore != null ? "/10" : ""}
+              value={avgScore != null ? Math.round(avgScore * 20) : null}
+              decimals={0}
+              suffix={avgScore != null ? "%" : ""}
             />
             <KpiCard
               index="03"
