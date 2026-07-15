@@ -6,6 +6,7 @@ import AnimatedCounter from "@/components/animated-counter";
 import DashboardFilters from "./dashboard-filters";
 import AuditsDataTable, { type DataRow } from "./audits-data-table";
 import { formatDuration, type RawParams } from "@/lib/audit-filters";
+import type { LeaderboardEntry } from "./page";
 
 export default function DashboardClient({
   filtered = false,
@@ -18,6 +19,7 @@ export default function DashboardClient({
   filters,
   agentOptions = [],
   error = null,
+  leaderboard = [],
 }: {
   filtered?: boolean;
   weekCount?: number;
@@ -29,9 +31,8 @@ export default function DashboardClient({
   filters: RawParams;
   agentOptions?: { id: string; name: string }[];
   error?: string | null;
+  leaderboard?: LeaderboardEntry[];
 }) {
-  // Download reflects the current filter state — same params, server re-runs
-  // the query over the full matching set (not just the rows shown here).
   const exportParams = new URLSearchParams(
     Object.entries(filters).filter(
       (e): e is [string, string] => typeof e[1] === "string" && e[1] !== "",
@@ -166,6 +167,75 @@ export default function DashboardClient({
         <AuditsDataTable rows={recent} />
       ) : (
         <EmptyState filtered={filtered} />
+      )}
+
+      {/* Weekly Leaderboard */}
+      {!filtered && leaderboard.length > 0 && (
+        <motion.section
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: "-80px" }}
+          transition={{ duration: 0.7 }}
+          className="mt-20"
+        >
+          <div className="text-xs uppercase tracking-[0.25em] text-[var(--sky-700)] font-semibold mb-3">
+            This Week
+          </div>
+          <h2 className="font-display text-3xl md:text-4xl font-extrabold leading-tight mb-8 max-w-2xl">
+            Agent Leaderboard
+          </h2>
+          <div className="rounded-3xl bg-[var(--paper)] overflow-hidden">
+            {leaderboard.map((entry, i) => {
+              const pct = Math.round(entry.avgScore * 20);
+              const medal =
+                i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : null;
+              const barColor =
+                pct >= 80
+                  ? "bg-emerald-400"
+                  : pct >= 60
+                  ? "bg-amber-400"
+                  : "bg-rose-400";
+              return (
+                <div
+                  key={entry.agentId}
+                  className="flex items-center gap-5 px-7 py-5 border-b border-zinc-100 last:border-0 group hover:bg-zinc-50 transition"
+                >
+                  {/* Rank */}
+                  <div className="w-8 shrink-0 text-center">
+                    {medal ? (
+                      <span className="text-xl">{medal}</span>
+                    ) : (
+                      <span className="font-mono text-sm text-zinc-400">
+                        {i + 1}
+                      </span>
+                    )}
+                  </div>
+                  {/* Name + call count */}
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-[var(--ink)] truncate">
+                      {entry.name}
+                    </div>
+                    <div className="text-xs text-zinc-500 mt-0.5">
+                      {entry.count} call{entry.count === 1 ? "" : "s"} this week
+                    </div>
+                  </div>
+                  {/* Score bar */}
+                  <div className="flex items-center gap-3 shrink-0">
+                    <div className="w-28 h-2 rounded-full bg-zinc-100 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${barColor} transition-all duration-700`}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <span className="font-display text-lg font-extrabold tabular-nums w-12 text-right">
+                      {pct}%
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </motion.section>
       )}
 
       <motion.section
