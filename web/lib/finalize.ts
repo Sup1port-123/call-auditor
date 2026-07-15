@@ -173,6 +173,18 @@ export async function finalizeAudit(
         recommendations_json: JSON.stringify(evaluation.improvement_recommendations),
       })
       .eq("id", auditId);
+
+    // Fire low-score alert (non-blocking, best-effort)
+    if (evaluation.overall_score < 5) {
+      const { sendLowScoreAlert } = await import("@/lib/alert");
+      sendLowScoreAlert({
+        auditId,
+        agentName: agentName ?? "Unknown Agent",
+        score: evaluation.overall_score,
+        recommendations: evaluation.improvement_recommendations ?? [],
+      }).catch(console.error);
+    }
+
     return { status: "completed" };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
