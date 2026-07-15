@@ -10,8 +10,7 @@ import {
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-// Cap on rows pulled for the filtered view. The dataset is small; if it ever
-// grows past this, the filtered count/averages would undercount.
+// Cap on rows pulled for the filtered view.
 const FILTER_CAP = 2000;
 
 // How many rows the table renders (and fetches full insight for).
@@ -21,11 +20,16 @@ const DISPLAY_LIMIT = 50;
 const LIGHT_COLUMNS =
   "id, timestamp, audited_at, target, llm_provider, overall_score, duration_seconds, review_status";
 
-// Full columns incl. the heavy insight fields — only for the displayed rows so
-// they can be expanded inline. MUST stay one string literal (supabase-js parses
-// it at compile time; `+` concatenation collapses the row type).
+// Full columns incl. the heavy insight fields — only for the displayed rows.
 const FULL_COLUMNS =
   "id, timestamp, audited_at, target, llm_provider, overall_score, duration_seconds, review_status, summary, scores_json, strengths, what_was_lacking, recommendations_json, transcript";
+
+export type LeaderboardEntry = {
+  agentId: string;
+  name: string;
+  avgScore: number;
+  count: number;
+};
 
 export default async function DashboardPage({
   searchParams,
@@ -45,9 +49,6 @@ export default async function DashboardPage({
   const agents = agentOptions ?? [];
 
   if (filtered) {
-    // Stats over the whole matching set (light columns only). Filters MUST be
-    // applied before .order()/.limit() — supabase-js drops the filter methods
-    // from the builder type once a transform is chained.
     const statsQuery = applyAuditFilters(
       supabase.from("audits").select(LIGHT_COLUMNS),
       filters,
@@ -57,8 +58,6 @@ export default async function DashboardPage({
       .limit(FILTER_CAP);
     const all = statsData ?? [];
 
-    // Display rows with full insight (top N) — fetched separately so the heavy
-    // columns aren't pulled across the whole matching set.
     const displayQuery = applyAuditFilters(
       supabase.from("audits").select(FULL_COLUMNS),
       filters,
@@ -126,6 +125,32 @@ export default async function DashboardPage({
       ? scored.reduce((a, r) => a + (r.overall_score ?? 0), 0) / scored.length
       : null;
 
+  // Leaderboard: agents ranked by avg score this week
+  const { data: lbRows } = await supabase
+    .from("audits")
+    .select("agent_id, overall_score, agents(name)")
+    .gte("timestamp", since.toISOString())
+    .not("overall_score", "is", null)
+    .not("agent_id", "is", null);
+
+  const agentMap = new Map<string, { name: string; scores: number[] }>();
+  for (const row of (lbRows ?? [])) {
+    const agentId = row.agent_id as string;
+    const name =
+      (row.agents as { name?: string } | null)?.name ?? "Unknown";
+    const score = row.overall_score as number;
+    if (!agentMap.has(agentId)) agentMap.set(agentId, { name, scores: [] });
+    agentMap.get(agentId)!.scores.push(score);
+  }
+  const leaderboard: LeaderboardEntry[] = Array.from(agentMap.entries())
+    .map(([agentId, { name, scores }]) => ({
+      agentId,
+      name,
+      avgScore: scores.reduce((a, b) => a + b, 0) / scores.length,
+      count: scores.length,
+    }))
+    .sort((a, b) => b.avgScore - a.avgScore);
+
   return (
     <DashboardClient
       weekCount={weekCount ?? 0}
@@ -134,6 +159,7 @@ export default async function DashboardPage({
       recent={recent ?? []}
       filters={sp}
       agentOptions={agents}
+      leaderboard={leaderboard}
     />
   );
 }
