@@ -6,7 +6,14 @@ import AnimatedCounter from "@/components/animated-counter";
 import DashboardFilters from "./dashboard-filters";
 import AuditsDataTable, { type DataRow } from "./audits-data-table";
 import { formatDuration, type RawParams } from "@/lib/audit-filters";
-import type { LeaderboardEntry } from "./page";
+
+// Exported so page.tsx (server component) can use the same type.
+export type LeaderboardEntry = {
+  agentId: string;
+  name: string;
+  avgScore: number;
+  count: number;
+};
 
 export default function DashboardClient({
   filtered = false,
@@ -85,9 +92,7 @@ export default function DashboardClient({
       <motion.div
         initial="hidden"
         animate="visible"
-        variants={{
-          visible: { transition: { staggerChildren: 0.08 } },
-        }}
+        variants={{ visible: { transition: { staggerChildren: 0.08 } } }}
         className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-16"
       >
         {filtered ? (
@@ -103,9 +108,7 @@ export default function DashboardClient({
             <KpiCard
               index="03"
               label="Avg duration"
-              displayValue={
-                avgDuration != null ? formatDuration(avgDuration) : "—"
-              }
+              displayValue={avgDuration != null ? formatDuration(avgDuration) : "—"}
             />
           </>
         ) : (
@@ -169,7 +172,7 @@ export default function DashboardClient({
         <EmptyState filtered={filtered} />
       )}
 
-      {/* Weekly Leaderboard */}
+      {/* Weekly Agent Leaderboard */}
       {!filtered && leaderboard.length > 0 && (
         <motion.section
           initial={{ opacity: 0, y: 20 }}
@@ -198,32 +201,25 @@ export default function DashboardClient({
               return (
                 <div
                   key={entry.agentId}
-                  className="flex items-center gap-5 px-7 py-5 border-b border-zinc-100 last:border-0 group hover:bg-zinc-50 transition"
+                  className="flex items-center gap-5 px-7 py-5 border-b border-zinc-100 last:border-0 hover:bg-zinc-50 transition"
                 >
-                  {/* Rank */}
                   <div className="w-8 shrink-0 text-center">
                     {medal ? (
                       <span className="text-xl">{medal}</span>
                     ) : (
-                      <span className="font-mono text-sm text-zinc-400">
-                        {i + 1}
-                      </span>
+                      <span className="font-mono text-sm text-zinc-400">{i + 1}</span>
                     )}
                   </div>
-                  {/* Name + call count */}
                   <div className="flex-1 min-w-0">
-                    <div className="font-semibold text-[var(--ink)] truncate">
-                      {entry.name}
-                    </div>
+                    <div className="font-semibold text-[var(--ink)] truncate">{entry.name}</div>
                     <div className="text-xs text-zinc-500 mt-0.5">
                       {entry.count} call{entry.count === 1 ? "" : "s"} this week
                     </div>
                   </div>
-                  {/* Score bar */}
                   <div className="flex items-center gap-3 shrink-0">
                     <div className="w-28 h-2 rounded-full bg-zinc-100 overflow-hidden">
                       <div
-                        className={`h-full rounded-full ${barColor} transition-all duration-700`}
+                        className={`h-full rounded-full ${barColor}`}
                         style={{ width: `${pct}%` }}
                       />
                     </div>
@@ -277,61 +273,33 @@ export default function DashboardClient({
 }
 
 function KpiCard({
-  index,
-  label,
-  value,
-  decimals = 0,
-  suffix,
-  displayValue,
+  index, label, value, decimals = 0, suffix, displayValue,
 }: {
-  index: string;
-  label: string;
-  value?: number | null;
-  decimals?: number;
-  suffix?: string;
-  displayValue?: string;
+  index: string; label: string; value?: number | null;
+  decimals?: number; suffix?: string; displayValue?: string;
 }) {
   return (
     <motion.div
-      variants={{
-        hidden: { opacity: 0, y: 16 },
-        visible: { opacity: 1, y: 0 },
-      }}
+      variants={{ hidden: { opacity: 0, y: 16 }, visible: { opacity: 1, y: 0 } }}
       transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
       whileHover={{ y: -4 }}
       className="relative rounded-3xl bg-[var(--paper)] p-7 group cursor-default"
     >
-      <span className="absolute top-5 right-6 font-mono text-xs text-zinc-400">
-        ({index})
-      </span>
-      <div className="text-[11px] uppercase tracking-[0.25em] text-zinc-500 font-medium">
-        {label}
-      </div>
+      <span className="absolute top-5 right-6 font-mono text-xs text-zinc-400">({index})</span>
+      <div className="text-[11px] uppercase tracking-[0.25em] text-zinc-500 font-medium">{label}</div>
       <div className="font-display text-5xl md:text-6xl font-extrabold mt-6 tabular-nums tracking-tight">
         {displayValue != null ? (
           displayValue
         ) : (
-          <AnimatedCounter
-            value={value ?? null}
-            decimals={decimals}
-            suffix={suffix}
-          />
+          <AnimatedCounter value={value ?? null} decimals={decimals} suffix={suffix} />
         )}
       </div>
     </motion.div>
   );
 }
 
-function ProcessCard({
-  index,
-  title,
-  body,
-  tone,
-}: {
-  index: string;
-  title: string;
-  body: string;
-  tone: "sky" | "violet" | "pink";
+function ProcessCard({ index, title, body, tone }: {
+  index: string; title: string; body: string; tone: "sky" | "violet" | "pink";
 }) {
   const accents: Record<typeof tone, string> = {
     sky: "from-[var(--sky-200)] to-[var(--sky-500)]",
@@ -344,12 +312,8 @@ function ProcessCard({
       transition={{ duration: 0.25 }}
       className="relative rounded-3xl bg-[var(--paper)] p-7 overflow-hidden"
     >
-      <span className="absolute top-5 right-6 font-mono text-xs text-zinc-400">
-        ({index})
-      </span>
-      <div
-        className={`w-12 h-12 rounded-2xl bg-gradient-to-br ${accents[tone]} mb-6`}
-      />
+      <span className="absolute top-5 right-6 font-mono text-xs text-zinc-400">({index})</span>
+      <div className={`w-12 h-12 rounded-2xl bg-gradient-to-br ${accents[tone]} mb-6`} />
       <div className="font-display text-2xl font-bold mb-2">{title}</div>
       <p className="text-sm text-zinc-600 leading-relaxed">{body}</p>
     </motion.div>
