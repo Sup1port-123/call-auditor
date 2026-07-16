@@ -2,6 +2,11 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getAssemblyClient, scoreTranscript } from "@/lib/auditor";
 import { parseRubricJson, type RubricDimension } from "@/lib/rubric";
 
+// Minimum words a transcript must have to be worth scoring.
+// Calls with fewer words are typically dropped calls, missed calls, or
+// calls where the customer hung up before any real conversation started.
+const MIN_TRANSCRIPT_WORDS = 30;
+
 type TranscriptLike = {
   status?: string;
   error?: string | null;
@@ -23,14 +28,13 @@ function formatTranscript(t: TranscriptLike): string {
     .join("\n");
 }
 
+function countWords(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
 // Drive an audit from `transcribing` to `completed` / `failed`. Idempotent
 // and safe to call concurrently: it claims the row with a conditional
 // update, so overlapping pollers + the webhook can't double-score.
-//
-// Supports two transcription paths:
-//   - AssemblyAI (async): transcript_id is a normal AssemblyAI ID
-//   - Sync (Deepgram/Sarvam/Whisper): transcript_id starts with "deepgram_",
-//     "sarvam_", or "whisper_" — transcript already stored in the audit row.
 export async function finalizeAudit(
   auditId: string,
 ): Promise<{ status: string }> {
@@ -76,7 +80,6 @@ export async function finalizeAudit(
     audit.transcript_id.startsWith("sarvam_") ||
     audit.transcript_id.startsWith("deepgram_")
   ) {
-    // Sync transcription path (Whisper/Sarvam/Deepgram): transcript already stored.
     const { data: stored } = await supabase
       .from("audits")
       .select("transcript, duration_seconds")
@@ -89,14 +92,12 @@ export async function finalizeAudit(
         ? stored.duration_seconds
         : null;
   } else {
-    // AssemblyAI path: pull the transcript from their API.
     let t: TranscriptLike;
     try {
       t = (await getAssemblyClient().transcripts.get(
         audit.transcript_id,
       )) as TranscriptLike;
     } catch {
-      // Couldn't reach AssemblyAI — revert so a later poll retries.
       await supabase
         .from("audits")
         .update({ status: "transcribing" })
@@ -127,6 +128,25 @@ export async function finalizeAudit(
       typeof t.audio_duration === "number" && t.audio_duration >= 0
         ? Math.round(t.audio_duration)
         : null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Guard: skip calls with no real conversation.
+  // A short transcript means the call was dropped, missed, or had no dialogue.
+  // ---------------------------------------------------------------------------
+  if (countWords(transcriptText) < MIN_TRANSCRIPT_WORDS) {
+    await supabase
+      .from("audits")
+      .update({
+        status: "failed",
+        transcript: transcriptText,
+        duration_seconds: durationSeconds,
+        audited_at: new Date().toISOString(),
+        error_message:
+          "No meaningful conversation detected — call was too short or silent.",
+      })
+      .eq("id", auditId);
+    return { status: "failed" };
   }
 
   // ---------------------------------------------------------------------------
