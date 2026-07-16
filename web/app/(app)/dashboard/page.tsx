@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import DashboardClient from "./dashboard-client";
+import DashboardClient, { type LeaderboardEntry } from "./dashboard-client";
 import {
   parseAuditFilters,
   hasAnyFilter,
@@ -10,26 +10,14 @@ import {
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-// Cap on rows pulled for the filtered view.
 const FILTER_CAP = 2000;
-
-// How many rows the table renders (and fetches full insight for).
 const DISPLAY_LIMIT = 50;
 
-// Light columns — cheap to pull over the whole matching set for the stat cards.
 const LIGHT_COLUMNS =
   "id, timestamp, audited_at, target, llm_provider, overall_score, duration_seconds, review_status";
 
-// Full columns incl. the heavy insight fields — only for the displayed rows.
 const FULL_COLUMNS =
   "id, timestamp, audited_at, target, llm_provider, overall_score, duration_seconds, review_status, summary, scores_json, strengths, what_was_lacking, recommendations_json, transcript";
-
-export type LeaderboardEntry = {
-  agentId: string;
-  name: string;
-  avgScore: number;
-  count: number;
-};
 
 export default async function DashboardPage({
   searchParams,
@@ -41,7 +29,6 @@ export default async function DashboardPage({
   const filters = parseAuditFilters(sp);
   const filtered = hasAnyFilter(filters);
 
-  // Agents power the dashboard "Agent" filter dropdown.
   const { data: agentOptions } = await supabase
     .from("agents")
     .select("id, name")
@@ -97,7 +84,7 @@ export default async function DashboardPage({
     );
   }
 
-  // Default (unfiltered) view — the original dashboard.
+  // Default (unfiltered) view.
   const since = new Date();
   since.setDate(since.getDate() - 7);
 
@@ -125,8 +112,8 @@ export default async function DashboardPage({
       ? scored.reduce((a, r) => a + (r.overall_score ?? 0), 0) / scored.length
       : null;
 
-  // Leaderboard: agents ranked by avg score this week
-  const { data: lbRows } = await supabase
+  // Leaderboard: agents ranked by avg score this week.
+  const { data: lbRaw } = await supabase
     .from("audits")
     .select("agent_id, overall_score, agents(name)")
     .gte("timestamp", since.toISOString())
@@ -134,14 +121,17 @@ export default async function DashboardPage({
     .not("agent_id", "is", null);
 
   const agentMap = new Map<string, { name: string; scores: number[] }>();
-  for (const row of (lbRows ?? [])) {
-    const agentId = row.agent_id as string;
-    const name =
-      (row.agents as { name?: string } | null)?.name ?? "Unknown";
-    const score = row.overall_score as number;
-    if (!agentMap.has(agentId)) agentMap.set(agentId, { name, scores: [] });
-    agentMap.get(agentId)!.scores.push(score);
+  for (const row of (lbRaw ?? []) as unknown as Array<{
+    agent_id: string;
+    overall_score: number;
+    agents: { name: string } | null;
+  }>) {
+    const id = row.agent_id;
+    const name = row.agents?.name ?? "Unknown";
+    if (!agentMap.has(id)) agentMap.set(id, { name, scores: [] });
+    agentMap.get(id)!.scores.push(row.overall_score);
   }
+
   const leaderboard: LeaderboardEntry[] = Array.from(agentMap.entries())
     .map(([agentId, { name, scores }]) => ({
       agentId,
