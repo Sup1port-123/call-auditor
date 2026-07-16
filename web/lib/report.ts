@@ -53,6 +53,112 @@ export function parseEmails(raw: string | null | undefined): string[] {
     .filter((s) => /.+@.+\..+/.test(s));
 }
 
+// Per-agent coaching row used in the daily email.
+type AgentCoachRow = {
+  name: string;
+  callCount: number;
+  avgScore: number;
+  topGaps: string[];
+};
+
+async function buildCoachingSection(
+  supabase: ReturnType<typeof createAdminClient>,
+  istDate: string,
+): Promise<string> {
+  // Look back 7 days from the report date for coaching data.
+  const endDate = new Date(`${istDate}T23:59:59.999+05:30`);
+  const startDate = new Date(endDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+  // Fetch audits and agents separately to avoid join syntax issues with TS types.
+  const [{ data: audits }, { data: agentsList }] = await Promise.all([
+    supabase
+      .from("audits")
+      .select("agent_id, overall_score, what_was_lacking, recommendations_json")
+      .gte("timestamp", startDate.toISOString())
+      .lte("timestamp", endDate.toISOString())
+      .not("agent_id", "is", null)
+      .not("overall_score", "is", null),
+    supabase.from("agents").select("id, name"),
+  ]);
+
+  if (!audits || audits.length === 0) return "";
+
+  const agentNameMap = new Map((agentsList ?? []).map((a) => [a.id, a.name]));
+
+  // Group by agent.
+  const agentMap = new Map<
+    string,
+    { scores: number[]; gaps: string[] }
+  >();
+  for (const row of audits) {
+    const id = row.agent_id;
+    if (!id) continue;
+    if (!agentMap.has(id)) agentMap.set(id, { scores: [], gaps: [] });
+    const entry = agentMap.get(id)!;
+    if (row.overall_score != null) entry.scores.push(row.overall_score);
+    // Collect gap text from what_was_lacking and recommendations_json.
+    if (row.what_was_lacking) entry.gaps.push(String(row.what_was_lacking));
+    if (Array.isArray(row.recommendations_json)) {
+      for (const rec of row.recommendations_json as string[]) {
+        if (rec) entry.gaps.push(rec);
+      }
+    }
+  }
+
+  const rows: AgentCoachRow[] = Array.from(agentMap.entries())
+    .map(([id, { scores, gaps }]) => ({
+      name: agentNameMap.get(id) ?? "Unknown",
+      callCount: scores.length,
+      avgScore:
+        scores.length > 0
+          ? scores.reduce((a, b) => a + b, 0) / scores.length
+          : 0,
+      // Deduplicate gaps and take the top 3.
+      topGaps: [...new Set(gaps)].slice(0, 3),
+    }))
+    .sort((a, b) => a.avgScore - b.avgScore); // lowest first
+
+  if (rows.length === 0) return "";
+
+  const rowsHtml = rows
+    .map((r) => {
+      const scoreColor =
+        r.avgScore >= 4
+          ? "#16a34a"
+          : r.avgScore >= 3
+            ? "#ca8a04"
+            : "#dc2626";
+      const gapsHtml =
+        r.topGaps.length > 0
+          ? `<ul style="margin:4px 0 0 0;padding-left:18px;color:#555;">${r.topGaps
+              .map((g) => `<li>${g}</li>`)
+              .join("")}</ul>`
+          : "<p style='color:#888;margin:4px 0 0 0;'>No specific gaps recorded.</p>";
+      return `
+      <tr style="border-bottom:1px solid #e5e7eb;">
+        <td style="padding:10px 12px;font-weight:600;">${r.name}</td>
+        <td style="padding:10px 12px;text-align:center;">${r.callCount}</td>
+        <td style="padding:10px 12px;text-align:center;font-weight:700;color:${scoreColor};">${r.avgScore.toFixed(1)}</td>
+        <td style="padding:10px 12px;">${gapsHtml}</td>
+      </tr>`;
+    })
+    .join("");
+
+  return `
+<h2 style="color:#111;font-size:16px;margin:32px 0 8px 0;">📋 Agent Coaching Notes (Last 7 Days)</h2>
+<table style="width:100%;border-collapse:collapse;font-size:14px;background:#fff;border:1px solid #e5e7eb;">
+  <thead>
+    <tr style="background:#f3f4f6;text-align:left;">
+      <th style="padding:10px 12px;">Agent</th>
+      <th style="padding:10px 12px;text-align:center;">Calls</th>
+      <th style="padding:10px 12px;text-align:center;">Avg Score</th>
+      <th style="padding:10px 12px;">Top Gaps</th>
+    </tr>
+  </thead>
+  <tbody>${rowsHtml}</tbody>
+</table>`;
+}
+
 async function sendReportEmail(opts: {
   to: string[];
   subject: string;
@@ -64,8 +170,6 @@ async function sendReportEmail(opts: {
   const smtpPass = process.env.SMTP_PASS;
   const from = process.env.REPORT_FROM_EMAIL || smtpUser;
 
-  // Preferred when configured: Gmail (or any) SMTP via an app password — no
-  // domain verification needed, and Google signs it so it lands in inboxes.
   if (smtpUser && smtpPass) {
     const { createTransport } = await import("nodemailer");
     const transport = createTransport({
@@ -84,7 +188,6 @@ async function sendReportEmail(opts: {
     return;
   }
 
-  // Fallback: Resend HTTP API (needs a verified sender domain).
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
     throw new Error(
@@ -116,79 +219,8 @@ async function sendReportEmail(opts: {
   }
 }
 
-type AgentCoachRow = {
-  agent_id: string | null;
-  overall_score: number | null;
-  recommendations_json: string | null;
-  agents: { name: string } | null;
-};
-
-function buildCoachingSection(rows: AgentCoachRow[]): string {
-  // Group by agent
-  const agentMap = new Map<
-    string,
-    { name: string; scores: number[]; recs: Set<string> }
-  >();
-
-  for (const row of rows) {
-    if (!row.agent_id || row.overall_score == null) continue;
-    if (!agentMap.has(row.agent_id)) {
-      agentMap.set(row.agent_id, {
-        name: row.agents?.name ?? "Unknown",
-        scores: [],
-        recs: new Set(),
-      });
-    }
-    const entry = agentMap.get(row.agent_id)!;
-    entry.scores.push(row.overall_score);
-    try {
-      const parsed: string[] = JSON.parse(row.recommendations_json ?? "[]");
-      parsed.slice(0, 3).forEach((r) => entry.recs.add(r));
-    } catch {
-      // ignore malformed JSON
-    }
-  }
-
-  if (agentMap.size === 0) return "";
-
-  const agentCards = Array.from(agentMap.entries())
-    .sort(([, a], [, b]) => {
-      const avgA = a.scores.reduce((s, x) => s + x, 0) / a.scores.length;
-      const avgB = b.scores.reduce((s, x) => s + x, 0) / b.scores.length;
-      return avgA - avgB; // lowest first — most needs coaching
-    })
-    .map(([, { name, scores, recs }]) => {
-      const avg = scores.reduce((s, x) => s + x, 0) / scores.length;
-      const pct = Math.round(avg * 20);
-      const color = pct >= 80 ? "#22c55e" : pct >= 60 ? "#f59e0b" : "#ef4444";
-      const recItems = [...recs]
-        .slice(0, 3)
-        .map((r) => `<li style="margin-bottom:4px;font-size:13px;color:#444">${r}</li>`)
-        .join("");
-      return `
-      <div style="border:1px solid #e5e7eb;border-radius:10px;padding:16px;margin-bottom:12px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-          <strong style="font-size:14px">${name}</strong>
-          <span style="background:${color};color:#fff;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600">
-            ${pct}% (${scores.length} call${scores.length === 1 ? "" : "s"})
-          </span>
-        </div>
-        ${recItems ? `<ul style="padding-left:18px;margin:0">${recItems}</ul>` : ""}
-      </div>`;
-    })
-    .join("");
-
-  return `
-  <div style="margin-top:32px">
-    <h3 style="font-size:14px;text-transform:uppercase;letter-spacing:.08em;color:#555;margin-bottom:12px">
-      Coaching Notes (Today's Calls)
-    </h3>
-    ${agentCards}
-  </div>`;
-}
-
-// Build that IST day's audit report (same .xlsx as the dashboard download) and
-// email it to the recipients. Returns how many audits it covered.
+// Build that IST day's audit report and email it to the recipients.
+// Also includes a 7-day agent coaching section.
 export async function generateAndSendReport(opts: {
   emails: string[];
   istDate: string;
@@ -196,7 +228,7 @@ export async function generateAndSendReport(opts: {
   const supabase = createAdminClient();
   const { gte, lte } = istDayRangeUtc(opts.istDate);
 
-  const [{ data, error }, { data: coachRows }] = await Promise.all([
+  const [{ data, error }, coachingHtml] = await Promise.all([
     supabase
       .from("audits")
       .select(AUDIT_EXPORT_COLUMNS)
@@ -204,32 +236,21 @@ export async function generateAndSendReport(opts: {
       .lte("timestamp", lte)
       .order("timestamp", { ascending: false })
       .limit(10000),
-    supabase
-      .from("audits")
-      .select("agent_id, overall_score, recommendations_json, agents(name)")
-      .gte("timestamp", gte)
-      .lte("timestamp", lte)
-      .not("overall_score", "is", null),
+    buildCoachingSection(supabase, opts.istDate),
   ]);
 
   if (error) throw new Error(error.message);
   const rows = data ?? [];
-
-  const coachingHtml = buildCoachingSection(
-    (coachRows ?? []) as AgentCoachRow[],
-  );
 
   const xlsx = await buildAuditsXlsx(rows);
   await sendReportEmail({
     to: opts.emails,
     subject: `Otis audit report — ${opts.istDate}`,
     html:
-      `<div style="font-family:system-ui,sans-serif;max-width:620px;margin:0 auto;padding:24px">` +
-      `<h2 style="margin-top:0">Otis Daily Report — ${opts.istDate}</h2>` +
-      `<p>Today's audit report is attached (<strong>${rows.length} audit${rows.length === 1 ? "" : "s"}</strong>). Full breakdown in the Excel file.</p>` +
+      `<p>Attached is the audit report for <strong>${opts.istDate}</strong> (IST): ` +
+      `${rows.length} audit${rows.length === 1 ? "" : "s"}.</p>` +
       coachingHtml +
-      `<p style="color:#aaa;font-size:11px;margin-top:32px;border-top:1px solid #eee;padding-top:16px">Sent automatically by Otis AI Call Auditor</p>` +
-      `</div>`,
+      `<p style="color:#888;font-size:12px;margin-top:24px;">Sent automatically by Otis.</p>`,
     filename: `otis-audits-${opts.istDate}.xlsx`,
     xlsx,
   });
