@@ -113,23 +113,26 @@ export default async function DashboardPage({
       : null;
 
   // Leaderboard: agents ranked by avg score this week.
-  const { data: lbRaw } = await supabase
+  // Use separate queries to avoid join syntax that may not be in generated types.
+  const { data: lbScores } = await supabase
     .from("audits")
-    .select("agent_id, overall_score, agents(name)")
+    .select("agent_id, overall_score")
     .gte("timestamp", since.toISOString())
     .not("overall_score", "is", null)
     .not("agent_id", "is", null);
 
+  // Build a name map from the agents list we already fetched.
+  const agentNameMap = new Map(agents.map((a) => [a.id, a.name]));
+
   const agentMap = new Map<string, { name: string; scores: number[] }>();
-  for (const row of (lbRaw ?? []) as unknown as Array<{
-    agent_id: string;
-    overall_score: number;
-    agents: { name: string } | null;
-  }>) {
+  for (const row of lbScores ?? []) {
     const id = row.agent_id;
-    const name = row.agents?.name ?? "Unknown";
+    if (!id) continue;
+    const name = agentNameMap.get(id) ?? "Unknown";
+    const score = row.overall_score;
+    if (score == null) continue;
     if (!agentMap.has(id)) agentMap.set(id, { name, scores: [] });
-    agentMap.get(id)!.scores.push(row.overall_score);
+    agentMap.get(id)!.scores.push(score);
   }
 
   const leaderboard: LeaderboardEntry[] = Array.from(agentMap.entries())
