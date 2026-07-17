@@ -132,7 +132,7 @@ export default function DashboardFilters({
     : "Duration";
 
   const scoreSummary = scoreActive
-    ? `Score ${opSummary(s.scoreOp, s.scoreMin, s.scoreMax)}`
+    ? `Score ${opSummary(s.scoreOp, s.scoreMin, s.scoreMax)}%`
     : "Audit score";
 
   const callCount = s.callIds
@@ -353,7 +353,10 @@ export default function DashboardFilters({
             )}
 
             {open === "score" && (
-              <Panel title="Audit score (0–10)" onApply={apply}>
+              <Panel title="Audit score (%)" onApply={apply}>
+                <p className="text-xs text-zinc-500 mb-3">
+                  Enter a value from 0 to 100. (e.g. 80 = 80% quality score)
+                </p>
                 <div className="mb-3">
                   <select
                     value={s.scoreOp}
@@ -368,29 +371,33 @@ export default function DashboardFilters({
                   </select>
                 </div>
                 <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    min={0}
-                    max={10}
-                    step={0.1}
-                    value={s.scoreMin}
-                    onChange={(e) => set({ scoreMin: e.target.value })}
-                    placeholder={s.scoreOp === "between" ? "min" : "value"}
-                    className={inputCls}
-                  />
+                  <div className="relative flex-1">
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={1}
+                      value={s.scoreMin}
+                      onChange={(e) => set({ scoreMin: e.target.value })}
+                      placeholder={s.scoreOp === "between" ? "min %" : "value %"}
+                      className={inputCls}
+                    />
+                  </div>
                   {s.scoreOp === "between" && (
                     <>
                       <span className="text-zinc-400 text-sm">and</span>
-                      <input
-                        type="number"
-                        min={0}
-                        max={10}
-                        step={0.1}
-                        value={s.scoreMax}
-                        onChange={(e) => set({ scoreMax: e.target.value })}
-                        placeholder="max"
-                        className={inputCls}
-                      />
+                      <div className="relative flex-1">
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          step={1}
+                          value={s.scoreMax}
+                          onChange={(e) => set({ scoreMax: e.target.value })}
+                          placeholder="max %"
+                          className={inputCls}
+                        />
+                      </div>
                     </>
                   )}
                 </div>
