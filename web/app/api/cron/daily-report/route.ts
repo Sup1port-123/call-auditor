@@ -59,7 +59,9 @@ export async function GET(req: Request) {
       return NextResponse.json({ skipped: "no recipients" });
     }
 
-    const { date, minutes } = istParts();
+    const dateParam = url.searchParams.get("date");
+    const { date: todayDate, minutes } = istParts();
+    const date = dateParam && /^d{4}-d{2}-d{2}$/.test(dateParam) ? dateParam : todayDate;
 
     if (!force) {
       if (settings.last_sent_date === date) {
