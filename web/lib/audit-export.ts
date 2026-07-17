@@ -1,11 +1,10 @@
 import { formatDuration } from "./audit-filters";
 import { parseScores, parseRecommendations } from "./types/audit";
 import { istStamp } from "./datetime";
+import { SCRIPT_COMPLIANCE_CHECKS } from "./rubric";
 
-// Single string literal — concatenating with `+` defeats supabase-js's
-// compile-time column parsing (the row type collapses to GenericStringError).
 export const AUDIT_EXPORT_COLUMNS =
-  "id, target, timestamp, audited_at, duration_seconds, overall_score, review_status, llm_provider, summary, scores_json, strengths, what_was_lacking, recommendations_json, transcript";
+  "id, target, timestamp, audited_at, duration_seconds, overall_score, review_status, llm_provider, summary, scores_json, strengths, what_was_lacking, recommendations_json, compliance_json, transcript";
 
 export type AuditExportRow = {
   target: string | null;
@@ -20,13 +19,12 @@ export type AuditExportRow = {
   strengths: string | null;
   what_was_lacking: string | null;
   recommendations_json: string | null;
+  compliance_json: string | null;
   transcript: string | null;
 };
 
-// Excel rejects cell text longer than 32,767 chars; keep a safety margin.
 const CELL_MAX = 32000;
 
-// IST, sortable — e.g. "2026-06-15 16:00".
 function fmtDateTime(iso: string | null): string {
   return istStamp(iso);
 }
@@ -41,14 +39,25 @@ function reviewLabel(v: unknown): string {
   return "Not reviewed";
 }
 
-// Build the exact .xlsx the dashboard download produces, from a set of audit
-// rows. Shared by the export route and the scheduled email report so they stay
-// byte-for-byte identical.
+function parseCompliance(raw: string | null): Record<string, string> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as Record<string, { passed?: boolean; evidence?: string }>;
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      if (v && typeof v === "object") {
+        out[k] = v.passed ? "✓ Pass" : "✗ Fail";
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 export async function buildAuditsXlsx(
   rows: readonly AuditExportRow[],
 ): Promise<Uint8Array> {
-  // Dimensions are per-agent, so the columns are the union of every dimension
-  // that appears across the exported rows, in first-seen order.
   const dimOrder: string[] = [];
   const dimMeta = new Map<string, { name: string; max: number }>();
   const parsedScores = rows.map((r) => parseScores(r.scores_json));
@@ -64,6 +73,8 @@ export async function buildAuditsXlsx(
     }
   }
 
+  const complianceHeaders = SCRIPT_COMPLIANCE_CHECKS.map((c) => `SC: ${c.name}`);
+
   const header = [
     "Recording URL",
     "Date of uploading (IST)",
@@ -77,6 +88,7 @@ export async function buildAuditsXlsx(
     "Strengths",
     "What was lacking",
     "Recommendations",
+    ...complianceHeaders,
     "Transcript",
     "LLM",
   ];
@@ -86,6 +98,7 @@ export async function buildAuditsXlsx(
   rows.forEach((r, i) => {
     const scores = parsedScores[i];
     const hasDur = r.duration_seconds != null && r.duration_seconds >= 0;
+    const compliance = parseCompliance(r.compliance_json);
 
     const dimCells = dimOrder.map((key) => {
       const v = scores[key];
@@ -101,6 +114,8 @@ export async function buildAuditsXlsx(
       .map((x, n) => `${n + 1}. ${x}`)
       .join("\n");
 
+    const complianceCells = SCRIPT_COMPLIANCE_CHECKS.map((c) => compliance[c.key] ?? "—");
+
     aoa.push([
       r.target ?? "",
       fmtDateTime(r.timestamp),
@@ -114,6 +129,7 @@ export async function buildAuditsXlsx(
       clip(r.strengths ?? ""),
       clip(r.what_was_lacking ?? ""),
       clip(recs),
+      ...complianceCells,
       clip(r.transcript ?? ""),
       r.llm_provider ?? "",
     ] as (string | number)[]);
@@ -134,6 +150,7 @@ export async function buildAuditsXlsx(
     { wch: 50 },
     { wch: 50 },
     { wch: 50 },
+    ...SCRIPT_COMPLIANCE_CHECKS.map(() => ({ wch: 12 })),
     { wch: 80 },
     { wch: 10 },
   ];
