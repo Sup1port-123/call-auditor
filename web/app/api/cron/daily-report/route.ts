@@ -59,7 +59,7 @@ export async function GET(req: Request) {
 
     const dateParam = url.searchParams.get("date");
     const { date: todayDate, minutes } = istParts();
-    const date = dateParam && /^d{4}-d{2}-d{2}$/.test(dateParam) ? dateParam : todayDate;
+    const date = dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : todayDate;
 
     if (!force) {
       if (settings.last_sent_date === date) {
