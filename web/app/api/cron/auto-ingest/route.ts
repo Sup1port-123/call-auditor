@@ -13,6 +13,8 @@ type KartaCall = {
   agent_name?: string;
   call_status?: string;
   recording_link?: string;
+  duration?: number;
+  talk_time?: number;
   [key: string]: unknown;
 };
 
@@ -97,12 +99,14 @@ export async function GET(req: Request) {
     console.log(`[otis] auto-ingest: ${allCalls.length} total calls from Karta`);
 
     // Only ended calls with a valid recording URL
-    const eligible = allCalls.filter(
-      (c) =>
-        String(c.call_status ?? "").toLowerCase() === "ended" &&
-        c.recording_link &&
-        /^https?:\/\//i.test(String(c.recording_link)),
-    );
+    const MIN_DURATION_SECONDS = 60;
+const eligible = allCalls.filter((c) => {
+  if (String(c.call_status ?? "").toLowerCase() !== "ended") return false;
+  if (!c.recording_link || !/^https?:\/\//i.test(String(c.recording_link))) return false;
+  const dur = (c.talk_time ?? c.duration ?? null) as number | null;
+  if (dur !== null && dur < MIN_DURATION_SECONDS) return false;
+  return true;
+});
     console.log(`[otis] auto-ingest: ${eligible.length} eligible calls`);
 
     if (eligible.length === 0) {
