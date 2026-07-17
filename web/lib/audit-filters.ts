@@ -2,10 +2,10 @@
 // and a few helpers shared by the server page and the filter UI.
 //
 // Filters (all optional, freely combined):
-//   • date     — last N days, and/or an explicit from/to range
-//   • callIds  — match the recording URL (target) against any of N ids/fragments
-//   • duration — recording length in seconds (gt / lt / eq / between)
-//   • score    — overall audit score 0–10 (gt / lt / eq / between)
+// • date     — last N days, and/or an explicit from/to range
+// • callIds  — match the recording URL (target) against any of N ids/fragments
+// • duration — recording length in seconds (gt / lt / eq / between)
+// • score    — overall audit score 0–100% (gt / lt / eq / between)
 
 export type RangeOp = "gt" | "lt" | "eq" | "between";
 export type DurUnit = "sec" | "min";
@@ -14,15 +14,15 @@ export type AuditFilters = {
   // Date
   days: number | null;
   from: string | null; // yyyy-mm-dd
-  to: string | null; // yyyy-mm-dd
+  to: string | null;   // yyyy-mm-dd
   // Call id / URL fragments
   callIds: string[];
   // Duration (always normalized to seconds for querying)
   durOp: RangeOp | null;
   durMin: number | null; // seconds
   durMax: number | null; // seconds
-  durUnit: DurUnit; // how the user entered it (for redisplay only)
-  // Score
+  durUnit: DurUnit;      // how the user entered it (for redisplay only)
+  // Score (user enters 0–100%; stored internally as 0–100 for conversion)
   scoreOp: RangeOp | null;
   scoreMin: number | null;
   scoreMax: number | null;
@@ -178,13 +178,17 @@ export function applyAuditFilters<T>(query: T, f: AuditFilters): T {
   }
 
   if (f.scoreOp) {
-    const v = f.scoreMin;
+    // User inputs percentage (0–100); overall_score in DB is 0–5.
+    // Convert: dbScore = pct / 100 * 5 = pct / 20
+    const pctToScore = (pct: number) => pct / 20;
+    const v = f.scoreMin != null ? pctToScore(f.scoreMin) : null;
+    const vMax = f.scoreMax != null ? pctToScore(f.scoreMax) : null;
     if (f.scoreOp === "gt" && v != null) q.gt("overall_score", v);
     else if (f.scoreOp === "lt" && v != null) q.lt("overall_score", v);
     else if (f.scoreOp === "eq" && v != null) q.eq("overall_score", v);
     else if (f.scoreOp === "between") {
-      if (f.scoreMin != null) q.gte("overall_score", f.scoreMin);
-      if (f.scoreMax != null) q.lte("overall_score", f.scoreMax);
+      if (v != null) q.gte("overall_score", v);
+      if (vMax != null) q.lte("overall_score", vMax);
     }
   }
 
