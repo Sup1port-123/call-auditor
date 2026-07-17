@@ -2,11 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getAssemblyClient, scoreTranscript } from "@/lib/auditor";
 import { parseRubricJson, type RubricDimension } from "@/lib/rubric";
 
-// Minimum words a transcript must have to be worth scoring.
-// Calls with fewer words are typically dropped calls, missed calls, or
-// calls where the customer hung up before any real conversation started.
 const MIN_TRANSCRIPT_WORDS = 30;
-// Minimum call duration (seconds) — calls shorter than this are not scored.
 const MIN_CALL_DURATION_SECONDS = 60;
 
 type TranscriptLike = {
@@ -34,12 +30,7 @@ function countWords(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
-// Drive an audit from `transcribing` to `completed` / `failed`. Idempotent
-// and safe to call concurrently: it claims the row with a conditional
-// update, so overlapping pollers + the webhook can't double-score.
-export async function finalizeAudit(
-  auditId: string,
-): Promise<{ status: string }> {
+export async function finalizeAudit(auditId: string): Promise<{ status: string }> {
   const supabase = createAdminClient();
 
   const { data: audit } = await supabase
@@ -54,7 +45,6 @@ export async function finalizeAudit(
   }
   if (!audit.transcript_id) return { status: audit.status ?? "unknown" };
 
-  // Claim: only one finalizer may move a row out of `transcribing`.
   const { data: claimed } = await supabase
     .from("audits")
     .update({ status: "scoring" })
@@ -71,9 +61,6 @@ export async function finalizeAudit(
     return { status: fresh?.status ?? "unknown" };
   }
 
-  // ---------------------------------------------------------------------------
-  // Fetch transcript — two paths depending on transcription provider.
-  // ---------------------------------------------------------------------------
   let transcriptText: string;
   let durationSeconds: number | null;
 
@@ -87,41 +74,26 @@ export async function finalizeAudit(
       .select("transcript, duration_seconds")
       .eq("id", auditId)
       .maybeSingle();
-
     transcriptText = stored?.transcript ?? "";
-    durationSeconds =
-      typeof stored?.duration_seconds === "number"
-        ? stored.duration_seconds
-        : null;
+    durationSeconds = typeof stored?.duration_seconds === "number" ? stored.duration_seconds : null;
   } else {
     let t: TranscriptLike;
     try {
-      t = (await getAssemblyClient().transcripts.get(
-        audit.transcript_id,
-      )) as TranscriptLike;
+      t = (await getAssemblyClient().transcripts.get(audit.transcript_id)) as TranscriptLike;
     } catch {
-      await supabase
-        .from("audits")
-        .update({ status: "transcribing" })
-        .eq("id", auditId);
+      await supabase.from("audits").update({ status: "transcribing" }).eq("id", auditId);
       return { status: "transcribing" };
     }
 
     if (t.status === "error") {
       await supabase
         .from("audits")
-        .update({
-          status: "failed",
-          error_message: `Transcription failed: ${t.error ?? "unknown"}`,
-        })
+        .update({ status: "failed", error_message: `Transcription failed: ${t.error ?? "unknown"}` })
         .eq("id", auditId);
       return { status: "failed" };
     }
     if (t.status !== "completed") {
-      await supabase
-        .from("audits")
-        .update({ status: "transcribing" })
-        .eq("id", auditId);
+      await supabase.from("audits").update({ status: "transcribing" }).eq("id", auditId);
       return { status: "transcribing" };
     }
 
@@ -132,10 +104,6 @@ export async function finalizeAudit(
         : null;
   }
 
-  // ---------------------------------------------------------------------------
-  // Guard: skip calls with no real conversation.
-  // A short transcript means the call was dropped, missed, or had no dialogue.
-  // ---------------------------------------------------------------------------
   if (countWords(transcriptText) < MIN_TRANSCRIPT_WORDS) {
     await supabase
       .from("audits")
@@ -144,14 +112,12 @@ export async function finalizeAudit(
         transcript: transcriptText,
         duration_seconds: durationSeconds,
         audited_at: new Date().toISOString(),
-        error_message:
-          "No meaningful conversation detected — call was too short or silent.",
+        error_message: "No meaningful conversation detected — call was too short or silent.",
       })
       .eq("id", auditId);
     return { status: "failed" };
   }
 
-  // Guard: skip calls under the minimum duration.
   if (durationSeconds !== null && durationSeconds < MIN_CALL_DURATION_SECONDS) {
     await supabase
       .from("audits")
@@ -166,9 +132,6 @@ export async function finalizeAudit(
     return { status: "failed" };
   }
 
-  // ---------------------------------------------------------------------------
-  // Load agent knowledge base + rubric, then score.
-  // ---------------------------------------------------------------------------
   let agentName: string | undefined;
   let knowledgeBase: string | undefined;
   let rubric: RubricDimension[] | undefined;
@@ -208,10 +171,10 @@ export async function finalizeAudit(
         strengths: evaluation.strengths,
         what_was_lacking: evaluation.what_was_lacking,
         recommendations_json: JSON.stringify(evaluation.improvement_recommendations),
+        compliance_json: JSON.stringify(evaluation.script_compliance ?? {}),
       })
       .eq("id", auditId);
 
-    // Fire low-score alert (non-blocking, best-effort)
     if (evaluation.overall_score < 5) {
       const { sendLowScoreAlert } = await import("@/lib/alert");
       sendLowScoreAlert({
