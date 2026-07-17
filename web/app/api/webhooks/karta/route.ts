@@ -9,7 +9,7 @@ export const maxDuration = 60;
 // Minimum call duration (seconds) — skip calls shorter than this.
 // Karta sends very short calls when the customer hangs up immediately
 // or the call is dropped before any real conversation starts.
-const MIN_DURATION_SECONDS = 30;
+const MIN_DURATION_SECONDS = 60;
 
 type KartaWebhookPayload = {
   event?: string;
