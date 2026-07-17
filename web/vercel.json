@@ -2,10 +2,6 @@
   "crons": [
     {
       "path": "/api/cron/daily-report",
-      "schedule": "30 14 * * *"
-    },
-    {
-      "path": "/api/cron/auto-ingest",
       "schedule": "30 1 * * *"
     }
   ]
