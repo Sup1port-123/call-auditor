@@ -6,6 +6,8 @@ import { parseRubricJson, type RubricDimension } from "@/lib/rubric";
 // Calls with fewer words are typically dropped calls, missed calls, or
 // calls where the customer hung up before any real conversation started.
 const MIN_TRANSCRIPT_WORDS = 30;
+// Minimum call duration (seconds) — calls shorter than this are not scored.
+const MIN_CALL_DURATION_SECONDS = 60;
 
 type TranscriptLike = {
   status?: string;
@@ -144,6 +146,21 @@ export async function finalizeAudit(
         audited_at: new Date().toISOString(),
         error_message:
           "No meaningful conversation detected — call was too short or silent.",
+      })
+      .eq("id", auditId);
+    return { status: "failed" };
+  }
+
+  // Guard: skip calls under the minimum duration.
+  if (durationSeconds !== null && durationSeconds < MIN_CALL_DURATION_SECONDS) {
+    await supabase
+      .from("audits")
+      .update({
+        status: "failed",
+        transcript: transcriptText,
+        duration_seconds: durationSeconds,
+        audited_at: new Date().toISOString(),
+        error_message: `Call too short to audit — ${durationSeconds}s is under the ${MIN_CALL_DURATION_SECONDS}s minimum.`,
       })
       .eq("id", auditId);
     return { status: "failed" };
