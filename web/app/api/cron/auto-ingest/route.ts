@@ -15,6 +15,10 @@ type KartaCall = {
   recording_link?: string;
   duration?: number;
   talk_time?: number;
+  from_number?: string;
+  caller_number?: string;
+  phone_number?: string;
+  customer_number?: string;
   [key: string]: unknown;
 };
 
@@ -171,7 +175,7 @@ const eligible = allCalls.filter((c) => {
         source: "batch",
         target: String(c.recording_link),
         call_id: c.call_id ? String(c.call_id) : null,
-        mobile_number: null,
+              mobile_number: String(c.from_number ?? c.caller_number ?? c.phone_number ?? c.customer_number ?? "").trim() || null,
         preset: "general",
         strictness: "standard",
         custom_focus: "",
