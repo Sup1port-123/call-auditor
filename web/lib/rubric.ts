@@ -81,9 +81,73 @@ export const RUBRIC_DIMENSIONS: RubricDimension[] = BASE_DIMENSIONS.map((d) => (
   max: DEFAULT_MAX,
 }));
 
+// ---------- Script Compliance Checks -----------------------------------------
+// Binary pass/fail checks evaluated against every call transcript.
+// These verify that the agent followed the mandatory Gromo call script.
+
+export type ComplianceCheckDef = {
+  key: string;
+  name: string;
+  instruction: string;
+};
+
+/**
+ * Mandatory script compliance checks for every inbound call.
+ * Each returns pass/fail + an evidence quote from the transcript.
+ */
+export const SCRIPT_COMPLIANCE_CHECKS: ComplianceCheckDef[] = [
+  {
+    key: "self_introduction",
+    name: "Agent Name Introduction",
+    instruction:
+      "Did the agent introduce themselves by their own personal name at any point in the call? " +
+      "(e.g. 'Main Priya bol rahi hoon' or 'This is Rahul speaking'.) " +
+      "Mark FAIL if the agent never mentioned their own name.",
+  },
+  {
+    key: "gromo_mention",
+    name: "Gromo Company Mention",
+    instruction:
+      "Did the agent explicitly say the word 'Gromo' at any point during the call? " +
+      "Mark FAIL if the company name was never mentioned.",
+  },
+  {
+    key: "issue_confirmation",
+    name: "Customer Issue Confirmation",
+    instruction:
+      "Did the agent confirm or repeat back the customer's specific issue, query, or reason for calling? " +
+      "(e.g. 'Aap loan ke baare mein jaanna chahte hain, sahi hai?') " +
+      "Mark FAIL if the agent never acknowledged what the customer was calling about.",
+  },
+  {
+    key: "resolution_provided",
+    name: "Resolution / Solution Provided",
+    instruction:
+      "Did the agent provide a clear solution, answer, or resolution to the customer's issue? " +
+      "Acknowledgment alone is not enough — the agent must have addressed the issue concretely. " +
+      "Mark FAIL if no resolution was offered.",
+  },
+  {
+    key: "closing_assistance",
+    name: "Further Assistance + Good Point Close",
+    instruction:
+      "Before ending the call, did the agent: " +
+      "(1) ask whether the customer needed any further help (e.g. 'Kya aur koi madad chahiye?'), AND " +
+      "(2) close the call properly on a positive/good note? " +
+      "Mark FAIL if either sub-check was missed.",
+  },
+  {
+    key: "feedback_capture",
+    name: "Feedback Capture",
+    instruction:
+      "Did the agent ask the customer for feedback on the call or service quality before closing? " +
+      "(e.g. a satisfaction rating request, 'Aaj ki call kaisi lagi?', or similar.) " +
+      "Mark FAIL if no feedback was solicited.",
+  },
+];
+
 // ---- Per-agent rubric parsing / validation --------------------------------
 
-// Turn a free-text dimension name into a stable, unique key.
 function slugifyKey(source: string, taken: Set<string>): string {
   let base = source
     .toLowerCase()
@@ -99,8 +163,6 @@ function slugifyKey(source: string, taken: Set<string>): string {
   return key;
 }
 
-// Coerce arbitrary editor input into clean, valid dimensions. Drops rows with
-// no name, clamps ranges, ensures min < max and unique keys.
 export function sanitizeRubric(input: unknown): RubricDimension[] {
   if (!Array.isArray(input)) return [];
   const taken = new Set<string>();
@@ -126,8 +188,6 @@ export function sanitizeRubric(input: unknown): RubricDimension[] {
   return out.slice(0, 40);
 }
 
-// Parse a stored rubric_json column. Returns null when absent/empty/invalid so
-// callers fall back to the built-in RUBRIC_DIMENSIONS.
 export function parseRubricJson(
   raw: string | null | undefined,
 ): RubricDimension[] | null {
@@ -154,43 +214,28 @@ export const AUDIT_PRESETS: Record<string, AuditPreset> = {
     name: "General quality",
     description: "Balanced evaluation across all 10 dimensions.",
     emphasis_keys: [],
-    instructions:
-      "Evaluate the call holistically. No single dimension is privileged.",
+    instructions: "Evaluate the call holistically. No single dimension is privileged.",
   },
   sales: {
     key: "sales",
     name: "Sales effectiveness",
-    description:
-      "How well did the AI sell? Focus on discovery, objections, closing, conversion.",
-    emphasis_keys: [
-      "opening",
-      "discovery",
-      "objection_handling",
-      "closing",
-      "goal",
-    ],
+    description: "How well did the AI sell? Focus on discovery, objections, closing, conversion.",
+    emphasis_keys: ["opening", "discovery", "objection_handling", "closing", "goal"],
     instructions:
       "This is a SALES audit. Pay particular attention to how the AI moved the customer toward conversion: hook, qualifying questions, handling pushback, and closing the loop. Weight sales-execution dimensions heavily in the overall_score.",
   },
   support: {
     key: "support",
     name: "Customer support",
-    description:
-      "Was the AI helpful and empathetic? Focus on tone, language, accuracy.",
-    emphasis_keys: [
-      "language_match",
-      "tone_empathy",
-      "flow",
-      "product_accuracy",
-    ],
+    description: "Was the AI helpful and empathetic? Focus on tone, language, accuracy.",
+    emphasis_keys: ["language_match", "tone_empathy", "flow", "product_accuracy"],
     instructions:
       "This is a SUPPORT audit. Pay particular attention to how the AI handled the customer's emotional state, language preference, and information needs. Weight empathy, language adaptation, and product accuracy heavily in the overall_score.",
   },
   compliance: {
     key: "compliance",
     name: "Compliance audit",
-    description:
-      "Did the AI stay within regulatory bounds? Focus on disclosures, accuracy.",
+    description: "Did the AI stay within regulatory bounds? Focus on disclosures, accuracy.",
     emphasis_keys: ["compliance", "product_accuracy", "opening", "closing"],
     instructions:
       "This is a COMPLIANCE audit. Be strict on missing disclosures, misleading claims, and prohibited language (guaranteed approval, fixed returns, etc.). Weight compliance and product accuracy heavily in the overall_score; minor flow issues are secondary.",
@@ -198,8 +243,7 @@ export const AUDIT_PRESETS: Record<string, AuditPreset> = {
   onboarding: {
     key: "onboarding",
     name: "Lead qualification",
-    description:
-      "Did the AI properly qualify the lead? Focus on discovery, accuracy, next steps.",
+    description: "Did the AI properly qualify the lead? Focus on discovery, accuracy, next steps.",
     emphasis_keys: ["discovery", "product_accuracy", "goal", "closing"],
     instructions:
       "This is a LEAD QUALIFICATION audit. Focus on whether the AI gathered enough info to qualify (or correctly disqualify) the customer and moved them to the right next step. Weight discovery, goal achievement, and closing heavily in the overall_score.",
@@ -240,6 +284,11 @@ Then provide:
 RUBRIC:
 {rubric}
 
+SCRIPT COMPLIANCE CHECKS:
+Beyond the rubric scores, evaluate whether the agent followed the mandatory Gromo call script. For each check below, determine pass (true) or fail (false), and provide a direct quote from the transcript (with timestamp if available) as evidence. If a check fails, quote the moment where it was expected but missing.
+
+{compliance_block}
+
 Be specific, fair, and direct. Indian fintech compliance standards apply. Do not be lenient on misleading product claims or guaranteed-approval language.
 
 Respond with VALID JSON ONLY matching this exact shape:
@@ -251,7 +300,15 @@ Respond with VALID JSON ONLY matching this exact shape:
   "summary": "<string>",
   "strengths": "<string>",
   "what_was_lacking": "<string>",
-  "improvement_recommendations": [ "<string>", ... ]
+  "improvement_recommendations": [ "<string>", ... ],
+  "script_compliance": {
+    "self_introduction": { "passed": <true|false>, "evidence": "<quote from transcript>" },
+    "gromo_mention": { "passed": <true|false>, "evidence": "<quote from transcript>" },
+    "issue_confirmation": { "passed": <true|false>, "evidence": "<quote from transcript>" },
+    "resolution_provided": { "passed": <true|false>, "evidence": "<quote from transcript>" },
+    "closing_assistance": { "passed": <true|false>, "evidence": "<quote from transcript>" },
+    "feedback_capture": { "passed": <true|false>, "evidence": "<quote from transcript>" }
+  }
 }`;
 
 function formatRubric(
@@ -260,9 +317,15 @@ function formatRubric(
 ): string {
   return rubric
     .map((d) => {
-      const marker = emphasisKeys.includes(d.key) ? "  [PRIMARY FOCUS]" : "";
+      const marker = emphasisKeys.includes(d.key) ? " [PRIMARY FOCUS]" : "";
       return `- ${d.key} (${d.name}) [score ${d.min}-${d.max}]${marker}: ${d.criteria}`;
     })
+    .join("\n");
+}
+
+function formatComplianceBlock(): string {
+  return SCRIPT_COMPLIANCE_CHECKS
+    .map((c, i) => `${i + 1}. ${c.key} — "${c.name}": ${c.instruction}`)
     .join("\n");
 }
 
@@ -276,8 +339,7 @@ export function buildSystemPrompt(opts: {
 }): string {
   const rubric =
     opts.rubric && opts.rubric.length > 0 ? opts.rubric : RUBRIC_DIMENSIONS;
-  const p =
-    AUDIT_PRESETS[opts.preset ?? "general"] ?? AUDIT_PRESETS.general;
+  const p = AUDIT_PRESETS[opts.preset ?? "general"] ?? AUDIT_PRESETS.general;
   const parts = [p.instructions];
   if (opts.customFocus?.trim()) {
     parts.push(`Additional reviewer focus: ${opts.customFocus.trim()}`);
@@ -289,10 +351,9 @@ export function buildSystemPrompt(opts: {
 
   let prompt = SYSTEM_PROMPT_TEMPLATE.replace("{focus_block}", focus_block)
     .replace("{strictness_block}", strictness_block)
-    .replace("{rubric}", formatRubric(rubric, p.emphasis_keys));
+    .replace("{rubric}", formatRubric(rubric, p.emphasis_keys))
+    .replace("{compliance_block}", formatComplianceBlock());
 
-  // Ground the audit in the agent's own knowledge base so product-accuracy
-  // and compliance are scored against documented truth, not the LLM's prior.
   if (opts.knowledgeBase?.trim()) {
     const kb = opts.knowledgeBase.trim().slice(0, 60000);
     prompt +=
