@@ -172,10 +172,12 @@ async function sendReportEmail(opts: {
 
   if (smtpUser && smtpPass) {
     const { createTransport } = await import("nodemailer");
-    const transport = createTransport({
-      service: "gmail",
-      auth: { user: smtpUser, pass: smtpPass },
-    });
+    const smtpHost = process.env.SMTP_HOST;
+    const transport = createTransport(
+      smtpHost
+        ? { host: smtpHost, port: 587, secure: false, auth: { user: smtpUser, pass: smtpPass } }
+        : { service: "gmail", auth: { user: smtpUser, pass: smtpPass } },
+    );
     await transport.sendMail({
       from: from || smtpUser,
       to: opts.to.join(", "),
