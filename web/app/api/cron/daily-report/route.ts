@@ -44,11 +44,11 @@ export async function GET(req: Request) {
       return NextResponse.json({ skipped: "disabled" });
     }
 
-    // Mon–Fri only (skip Saturday=6 and Sunday=0 in IST)
+    // Skip Sunday only — Saturday report covers Friday's calls
     if (!force) {
       const istDay = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" })).getDay();
-      if (istDay === 0 || istDay === 6) {
-        return NextResponse.json({ skipped: "weekend" });
+      if (istDay === 0) {
+        return NextResponse.json({ skipped: "sunday" });
       }
     }
 
