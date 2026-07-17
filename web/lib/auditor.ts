@@ -4,6 +4,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import {
   buildSystemPrompt,
   RUBRIC_DIMENSIONS,
+  SCRIPT_COMPLIANCE_CHECKS,
   type RubricDimension,
 } from "./rubric";
 
@@ -15,6 +16,11 @@ export type DimScore = {
   max?: number;
 };
 
+export type ComplianceCheck = {
+  passed: boolean;
+  evidence: string;
+};
+
 export type EvaluationResult = {
   scores: Record<string, DimScore>;
   overall_score: number;
@@ -22,6 +28,7 @@ export type EvaluationResult = {
   strengths: string;
   what_was_lacking: string;
   improvement_recommendations: string[];
+  script_compliance?: Record<string, ComplianceCheck>;
 };
 
 export type AuditScored = EvaluationResult & {
@@ -325,6 +332,19 @@ async function scoreWithGemini(systemPrompt: string, transcript: string, rubric:
   const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
   const scoreBlock = { type: Type.OBJECT, properties: { score: { type: Type.INTEGER, nullable: true }, rationale: { type: Type.STRING } }, required: ["score", "rationale"] };
   const scoresSchema = { type: Type.OBJECT, properties: Object.fromEntries(rubric.map((d) => [d.key, scoreBlock])), required: rubric.map((d) => d.key) };
+  const complianceCheckBlock = {
+    type: Type.OBJECT,
+    properties: {
+      passed: { type: Type.BOOLEAN },
+      evidence: { type: Type.STRING },
+    },
+    required: ["passed", "evidence"],
+  };
+  const complianceSchema = {
+    type: Type.OBJECT,
+    properties: Object.fromEntries(SCRIPT_COMPLIANCE_CHECKS.map((c) => [c.key, complianceCheckBlock])),
+    required: SCRIPT_COMPLIANCE_CHECKS.map((c) => c.key),
+  };
   const response = await ai.models.generateContent({
     model,
     contents: [{ role: "user", parts: [{ text: `TRANSCRIPT:\n${transcript}` }] }],
@@ -332,8 +352,16 @@ async function scoreWithGemini(systemPrompt: string, transcript: string, rubric:
       systemInstruction: systemPrompt, responseMimeType: "application/json", temperature: 0.2,
       responseSchema: {
         type: Type.OBJECT,
-        properties: { scores: scoresSchema, overall_score: { type: Type.INTEGER }, summary: { type: Type.STRING }, strengths: { type: Type.STRING }, what_was_lacking: { type: Type.STRING }, improvement_recommendations: { type: Type.ARRAY, items: { type: Type.STRING } } },
-        required: ["scores", "overall_score", "summary", "strengths", "what_was_lacking", "improvement_recommendations"],
+        properties: {
+          scores: scoresSchema,
+          overall_score: { type: Type.INTEGER },
+          summary: { type: Type.STRING },
+          strengths: { type: Type.STRING },
+          what_was_lacking: { type: Type.STRING },
+          improvement_recommendations: { type: Type.ARRAY, items: { type: Type.STRING } },
+          script_compliance: complianceSchema,
+        },
+        required: ["scores", "overall_score", "summary", "strengths", "what_was_lacking", "improvement_recommendations", "script_compliance"],
       },
     },
   });
@@ -357,4 +385,4 @@ async function scoreWithClaude(systemPrompt: string, transcript: string): Promis
 function parseJsonResponse(text: string): EvaluationResult {
   const cleaned = text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
   return JSON.parse(cleaned) as EvaluationResult;
-          }
+}
