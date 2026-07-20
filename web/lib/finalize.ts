@@ -2,7 +2,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getAssemblyClient, scoreTranscript } from "@/lib/auditor";
 import { parseRubricJson, type RubricDimension } from "@/lib/rubric";
 
+// Minimum words a transcript must have to be worth scoring.
 const MIN_TRANSCRIPT_WORDS = 30;
+// Minimum call duration (seconds) — calls shorter than this are not scored.
 const MIN_CALL_DURATION_SECONDS = 60;
 
 type TranscriptLike = {
@@ -30,7 +32,32 @@ function countWords(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
-export async function finalizeAudit(auditId: string): Promise<{ status: string }> {
+// Save the completed evaluation to the DB. If compliance_json column doesn't
+// exist yet (pending migration), fall back to saving without it so audits
+// still complete successfully.
+async function saveCompleted(
+  supabase: ReturnType<typeof createAdminClient>,
+  auditId: string,
+  fields: Record<string, unknown>,
+): Promise<void> {
+  const { error } = await supabase
+    .from("audits")
+    .update(fields)
+    .eq("id", auditId);
+
+  if (error?.message?.includes("compliance_json")) {
+    // Column not yet added to Supabase — save without compliance data
+    const { compliance_json: _omit, ...rest } = fields as Record<string, unknown> & { compliance_json?: unknown };
+    await supabase.from("audits").update(rest).eq("id", auditId);
+    return;
+  }
+
+  if (error) throw new Error(error.message);
+}
+
+export async function finalizeAudit(
+  auditId: string,
+): Promise<{ status: string }> {
   const supabase = createAdminClient();
 
   const { data: audit } = await supabase
@@ -74,26 +101,41 @@ export async function finalizeAudit(auditId: string): Promise<{ status: string }
       .select("transcript, duration_seconds")
       .eq("id", auditId)
       .maybeSingle();
+
     transcriptText = stored?.transcript ?? "";
-    durationSeconds = typeof stored?.duration_seconds === "number" ? stored.duration_seconds : null;
+    durationSeconds =
+      typeof stored?.duration_seconds === "number"
+        ? stored.duration_seconds
+        : null;
   } else {
     let t: TranscriptLike;
     try {
-      t = (await getAssemblyClient().transcripts.get(audit.transcript_id)) as TranscriptLike;
+      t = (await getAssemblyClient().transcripts.get(
+        audit.transcript_id,
+      )) as TranscriptLike;
     } catch {
-      await supabase.from("audits").update({ status: "transcribing" }).eq("id", auditId);
+      await supabase
+        .from("audits")
+        .update({ status: "transcribing" })
+        .eq("id", auditId);
       return { status: "transcribing" };
     }
 
     if (t.status === "error") {
       await supabase
         .from("audits")
-        .update({ status: "failed", error_message: `Transcription failed: ${t.error ?? "unknown"}` })
+        .update({
+          status: "failed",
+          error_message: `Transcription failed: ${t.error ?? "unknown"}`,
+        })
         .eq("id", auditId);
       return { status: "failed" };
     }
     if (t.status !== "completed") {
-      await supabase.from("audits").update({ status: "transcribing" }).eq("id", auditId);
+      await supabase
+        .from("audits")
+        .update({ status: "transcribing" })
+        .eq("id", auditId);
       return { status: "transcribing" };
     }
 
@@ -112,7 +154,8 @@ export async function finalizeAudit(auditId: string): Promise<{ status: string }
         transcript: transcriptText,
         duration_seconds: durationSeconds,
         audited_at: new Date().toISOString(),
-        error_message: "No meaningful conversation detected — call was too short or silent.",
+        error_message:
+          "No meaningful conversation detected — call was too short or silent.",
       })
       .eq("id", auditId);
     return { status: "failed" };
@@ -156,24 +199,22 @@ export async function finalizeAudit(auditId: string): Promise<{ status: string }
       knowledgeBase,
       rubric,
     });
-    await supabase
-      .from("audits")
-      .update({
-        status: "completed",
-        transcript: transcriptText,
-        duration_seconds: durationSeconds,
-        audited_at: new Date().toISOString(),
-        llm_provider: evaluation.llm_provider,
-        llm_fallback_reason: evaluation.llm_fallback_reason,
-        overall_score: evaluation.overall_score,
-        summary: evaluation.summary,
-        scores_json: JSON.stringify(evaluation.scores),
-        strengths: evaluation.strengths,
-        what_was_lacking: evaluation.what_was_lacking,
-        recommendations_json: JSON.stringify(evaluation.improvement_recommendations),
-        compliance_json: JSON.stringify(evaluation.script_compliance ?? {}),
-      })
-      .eq("id", auditId);
+
+    await saveCompleted(supabase, auditId, {
+      status: "completed",
+      transcript: transcriptText,
+      duration_seconds: durationSeconds,
+      audited_at: new Date().toISOString(),
+      llm_provider: evaluation.llm_provider,
+      llm_fallback_reason: evaluation.llm_fallback_reason,
+      overall_score: evaluation.overall_score,
+      summary: evaluation.summary,
+      scores_json: JSON.stringify(evaluation.scores),
+      strengths: evaluation.strengths,
+      what_was_lacking: evaluation.what_was_lacking,
+      recommendations_json: JSON.stringify(evaluation.improvement_recommendations),
+      compliance_json: JSON.stringify(evaluation.script_compliance ?? {}),
+    });
 
     if (evaluation.overall_score < 5) {
       const { sendLowScoreAlert } = await import("@/lib/alert");
