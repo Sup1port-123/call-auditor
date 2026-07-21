@@ -265,6 +265,19 @@ You will be given a timestamped transcript. Speaker labels (Speaker A, Speaker B
 - If labels ARE present, they were produced by automatic diarization and are usually reliable but can occasionally be wrong. Determine which speaker is the AI based on the opening turns (the AI typically greets and identifies the company), then evaluate that speaker's behavior. If diarization looks broken, note it in the rationales.
 - If labels are NOT present, infer who is speaking from context — the AI is the caller.
 
+CRITICAL — NON-INTERACTION CALLS:
+Before scoring anything, check whether an actual two-way conversation took place between the agent and the customer. A non-interaction call is one where:
+- The customer immediately put the call on hold and no real dialogue occurred
+- The call was silent or disconnected before the customer spoke substantively
+- The transcript contains only the agent's greeting plus hold/system messages with no customer response
+
+If this is a non-interaction call:
+- Set overall_score to 1
+- Set every rubric dimension score to null with rationale "No customer interaction occurred — call was on hold or silent"
+- Set summary to clearly explain that no real conversation took place and the call cannot be meaningfully evaluated
+- Set all script_compliance checks to passed: false with evidence "No customer interaction — agent had no opportunity to fulfill this check"
+- Do NOT reward the agent for a polite greeting on a call where the customer never engaged
+
 AUDIT FOCUS:
 {focus_block}
 
