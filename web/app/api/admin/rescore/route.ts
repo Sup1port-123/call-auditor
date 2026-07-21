@@ -5,17 +5,32 @@ import { finalizeAudit } from "@/lib/finalize";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+const HOLD_KEYWORDS = [
+  "on hold", "non-interaction", "no interaction",
+  "no substantive dialogue", "hold message", "could not be meaningfully",
+  "cannot be meaningfully", "no real conversation", "no actual interaction",
+  "no customer interaction", "call was on hold", "placed on hold",
+  "call is on hold", "please hold", "hold karo", "hold kar",
+  "put the call on hold", "put on hold",
+];
+
+function isHoldCall(text: string): boolean {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  return HOLD_KEYWORDS.some(kw => lower.includes(kw));
+}
+
 // POST /api/admin/rescore
-// Body options:
-//   { audit_id: string }            — re-score a single audit
-//   { find_hold_calls: true }       — re-score ALL completed audits that are hold/no-interaction calls
-//   { batch_id: string, find_hold_calls: true } — same, scoped to one batch
+// { audit_id }                               — single audit
+// { find_hold_calls: true }                  — all completed audits (summary + transcript)
+// { find_hold_calls: true, batch_id }        — scoped to one batch
+// { find_hold_calls: true, offset, limit }   — paginated (default limit 20)
 export async function POST(req: Request) {
   try {
     const body = await req.json();
     const supabase = createAdminClient();
 
-    // ── Single audit rescore ──────────────────────────────────────────────
+    // ── Single audit ──────────────────────────────────────────────────────
     if (body.audit_id) {
       const { data: audit } = await supabase
         .from("audits")
@@ -35,62 +50,57 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, audit_id: body.audit_id, ...result });
     }
 
-    // ── Bulk hold-call rescore ─────────────────────────────────────────────
+    // ── Bulk hold-call rescore ────────────────────────────────────────────
     if (body.find_hold_calls) {
-      // Find completed audits where summary or transcript indicates no real conversation.
-      // Keywords: "on hold", "non-interaction", "no interaction", "hold message"
+      const offset = Number(body.offset ?? 0);
+      const limit  = Number(body.limit  ?? 20);
+
       let query = supabase
         .from("audits")
-        .select("id, summary, overall_score")
-        .eq("status", "completed");
+        .select("id, summary, transcript")
+        .eq("status", "completed")
+        .range(offset, offset + limit - 1);
 
       if (body.batch_id) query = query.eq("batch_id", body.batch_id);
 
-      const { data: audits } = await query.limit(2000);
+      const { data: audits } = await query;
 
       if (!audits || audits.length === 0)
-        return NextResponse.json({ ok: true, found: 0, rescored: 0 });
+        return NextResponse.json({ ok: true, found: 0, rescored: 0, done: true });
 
-      // Filter locally for hold-call patterns in summary
-      const holdKeywords = ["on hold", "non-interaction", "no interaction",
-        "no substantive dialogue", "hold message", "could not be meaningfully",
-        "cannot be meaningfully", "no real conversation", "no actual interaction",
-        "no customer interaction", "call was on hold"];
+      // Filter: hold keywords in summary OR transcript
+      const holdAudits = audits.filter(a =>
+        isHoldCall(a.summary ?? "") || isHoldCall(a.transcript ?? "")
+      );
 
-      const holdAudits = audits.filter(a => {
-        if (!a.summary) return false;
-        const s = a.summary.toLowerCase();
-        return holdKeywords.some(kw => s.includes(kw));
-      });
-
-      if (holdAudits.length === 0)
-        return NextResponse.json({ ok: true, found: 0, rescored: 0, message: "No hold calls found" });
-
-      // Reset all to transcribing
-      const ids = holdAudits.map(a => a.id);
-      await supabase.from("audits")
-        .update({ status: "transcribing", error_message: null })
-        .in("id", ids);
-
-      // Re-score with concurrency limit of 3
       let rescored = 0;
       const failed: string[] = [];
-      const CONCURRENCY = 3;
 
-      for (let i = 0; i < ids.length; i += CONCURRENCY) {
-        const chunk = ids.slice(i, i + CONCURRENCY);
-        await Promise.all(chunk.map(async (id) => {
-          try {
-            await finalizeAudit(id);
-            rescored++;
-          } catch (err) {
-            console.error("[otis] rescore failed for", id, err);
-            failed.push(id);
-          }
-        }));
+      if (holdAudits.length > 0) {
+        const ids = holdAudits.map(a => a.id);
+        await supabase.from("audits")
+          .update({ status: "transcribing", error_message: null })
+          .in("id", ids);
+
+        const CONCURRENCY = 3;
+        for (let i = 0; i < ids.length; i += CONCURRENCY) {
+          const chunk = ids.slice(i, i + CONCURRENCY);
+          await Promise.all(chunk.map(async (id) => {
+            try { await finalizeAudit(id); rescored++; }
+            catch (err) { console.error("[otis] rescore failed:", id, err); failed.push(id); }
+          }));
+        }
       }
 
-      return NextResponse.json({ ok: true, found: holdAudits.length, rescored, failed });
+      return NextResponse.json({
+        ok: true,
+        scanned: audits.length,
+        found: holdAudits.length,
+        rescored,
+        failed,
+        done: audits.length < limit,
+        next_offset: offset + limit,
+      });
     }
 
     return NextResponse.json({ error: "Provide audit_id or find_hold_calls:true" }, { status: 400 });
