@@ -200,6 +200,34 @@ export async function finalizeAudit(
       rubric,
     });
 
+    // Non-interaction call detection — exclude these calls from quality metrics entirely.
+    // A non-interaction call (customer put on hold, silent, disconnected before speaking)
+    // must NOT count against the agent's average quality score.
+    const summaryLower = (evaluation.summary ?? "").toLowerCase();
+    const isNonInteraction = [
+      "no customer interaction",
+      "no real conversation",
+      "call was on hold",
+      "non-interaction call",
+      "no actual interaction",
+      "cannot be meaningfully",
+      "could not be meaningfully",
+      "no substantive dialogue",
+    ].some((kw) => summaryLower.includes(kw));
+
+    if (isNonInteraction) {
+      await saveCompleted(supabase, auditId, {
+        status: "excluded",
+        transcript: transcriptText,
+        duration_seconds: durationSeconds,
+        audited_at: new Date().toISOString(),
+        overall_score: null,
+        summary: evaluation.summary,
+        error_message: "Non-interaction call — excluded from quality scoring",
+      });
+      return { status: "excluded" };
+    }
+
     await saveCompleted(supabase, auditId, {
       status: "completed",
       transcript: transcriptText,
