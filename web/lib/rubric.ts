@@ -274,7 +274,7 @@ Before scoring anything, check whether an actual two-way conversation took place
 If this is a non-interaction call:
 - Set overall_score to 1
 - Set every rubric dimension score to null with rationale "No customer interaction occurred — call was on hold or silent"
-- Set summary to clearly explain that no real conversation took place and the call cannot be meaningfully evaluated
+- Set summary to clearly explain that no real conversation took place. ALWAYS include the exact phrase "no customer interaction" in the summary — the system uses this phrase to detect and exclude the call from agent quality metrics.
 - Set all script_compliance checks to passed: false with evidence "No customer interaction — agent had no opportunity to fulfill this check"
 - Do NOT reward the agent for a polite greeting on a call where the customer never engaged
 
