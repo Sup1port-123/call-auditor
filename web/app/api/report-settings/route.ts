@@ -45,8 +45,8 @@ export async function POST(req: Request) {
         );
       }
       const { date } = istParts();
-      const { count } = await generateAndSendReport({ emails, istDate: date });
-      return NextResponse.json({ tested: true, count, date });
+      const { inboundCount, outboundCount } = await generateAndSendReport({ emails, istDate: date });
+      return NextResponse.json({ tested: true, inboundCount, outboundCount, date });
     }
 
     // Save settings.
@@ -72,4 +72,4 @@ export async function POST(req: Request) {
     console.error("[otis] report-settings crashed:", message);
     return NextResponse.json({ error: message }, { status: 500 });
   }
-}
+                                                                }
