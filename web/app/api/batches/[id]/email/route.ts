@@ -50,8 +50,8 @@ function scoreColor(s: number | null): string {
   return pct >= 80 ? "#16a34a" : pct >= 60 ? "#ca8a04" : "#dc2626";
 }
 
-export async function POST(req: Request, { params }: { params: { id: string } }) {
-  const { id } = params;
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   const supabase = createAdminClient();
 
   const { data: batch } = await supabase
@@ -83,13 +83,13 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   const auditRows = rows
     .map(
       (r) => `
-    <tr style="border-bottom:1px solid #e5e7eb;">
-      <td style="padding:8px 10px;font-size:13px;color:#555;">${r.call_id ?? "—"}</td>
-      <td style="padding:8px 10px;font-size:13px;color:#555;">${r.mobile_number ?? "—"}</td>
-      <td style="padding:8px 10px;text-align:center;font-weight:700;color:${scoreColor(r.overall_score)};">${toQualityPct(r.overall_score)}</td>
-      <td style="padding:8px 10px;font-size:13px;color:#444;">${r.summary ?? (r.error_message ? `<span style="color:#dc2626;">${r.error_message}</span>` : "—")}</td>
-      <td style="padding:8px 10px;font-size:13px;color:#dc2626;">${r.what_was_lacking ?? "—"}</td>
-    </tr>`,
+<tr style="border-bottom:1px solid #e5e7eb;">
+  <td style="padding:8px 10px;font-size:13px;color:#555;">${r.call_id ?? "—"}</td>
+  <td style="padding:8px 10px;font-size:13px;color:#555;">${r.mobile_number ?? "—"}</td>
+  <td style="padding:8px 10px;text-align:center;font-weight:700;color:${scoreColor(r.overall_score)};">${toQualityPct(r.overall_score)}</td>
+  <td style="padding:8px 10px;font-size:13px;color:#444;">${r.summary ?? (r.error_message ? `<span style="color:#dc2626;">${r.error_message}</span>` : "—")}</td>
+  <td style="padding:8px 10px;font-size:13px;color:#dc2626;">${r.what_was_lacking ?? "—"}</td>
+</tr>`,
     )
     .join("");
 
@@ -148,4 +148,4 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     const message = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: message }, { status: 500 });
   }
-                             }
+}
