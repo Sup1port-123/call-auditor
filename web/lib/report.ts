@@ -33,7 +33,7 @@ export function istDayRangeUtc(istDate: string): { gte: string; lte: string } {
 
 export function parseHHMM(v: string | null | undefined): number | null {
   if (!v) return null;
-  const m = /^(d{1,2}):(d{2})$/.exec(v.trim());
+  const m = /^(\d{1,2}):(\d{2})$/.exec(v.trim());
   if (!m) return null;
   const h = Number(m[1]);
   const min = Number(m[2]);
@@ -119,6 +119,14 @@ type StatRow = {
   agents: { name: string } | { name: string }[] | null;
 };
 
+type CallEntry = {
+  mobile: string;
+  agentName: string;
+  pct: number;
+  summary: string;
+  lacking: string | null;
+};
+
 function scoreColor(pct: number | null): string {
   if (pct == null) return "#888888";
   return pct >= 80 ? "#16a34a" : pct >= 60 ? "#ca8a04" : "#dc2626";
@@ -136,6 +144,86 @@ function fmtDate(istDate: string): string {
     year: "numeric",
     timeZone: "Asia/Kolkata",
   });
+}
+
+function extractAgentName(r: StatRow): string {
+  const agentsVal = r.agents;
+  return Array.isArray(agentsVal)
+    ? (agentsVal[0]?.name ?? "Unknown")
+    : (agentsVal as { name: string } | null)?.name ?? "Unknown";
+}
+
+function toEntry(r: StatRow): CallEntry {
+  return {
+    mobile: r.mobile_number ?? "—",
+    agentName: extractAgentName(r),
+    pct: toQualityPct(r.overall_score!)!,
+    summary: r.summary!,
+    lacking: r.what_was_lacking,
+  };
+}
+
+/**
+ * Good calls: score >= 80%, up to 2 per agent, max 10 total.
+ * Bad calls: score < 60%, up to 3 per agent (so ALL agents appear), max 30 total.
+ */
+function buildCallLists(allRows: StatRow[]): {
+  goodCalls: CallEntry[];
+  badCalls: CallEntry[];
+} {
+  const eligible = allRows.filter(
+    (r) => r.overall_score != null && r.summary,
+  );
+
+  const byScoreDesc = [...eligible].sort(
+    (a, b) => (b.overall_score ?? 0) - (a.overall_score ?? 0),
+  );
+  const byScoreAsc = [...eligible].sort(
+    (a, b) => (a.overall_score ?? 0) - (b.overall_score ?? 0),
+  );
+
+  // Good calls: top performers, spread across agents
+  const goodAgentCount = new Map<string, number>();
+  const goodCalls: CallEntry[] = [];
+  for (const r of byScoreDesc) {
+    const pct = toQualityPct(r.overall_score!)!;
+    if (pct < 80) break;
+    const name = extractAgentName(r);
+    const cnt = goodAgentCount.get(name) ?? 0;
+    if (cnt < 2) {
+      goodCalls.push(toEntry(r));
+      goodAgentCount.set(name, cnt + 1);
+    }
+    if (goodCalls.length >= 10) break;
+  }
+
+  // Bad calls: worst per agent so ALL processes are covered
+  const badAgentCount = new Map<string, number>();
+  const badCalls: CallEntry[] = [];
+  for (const r of byScoreAsc) {
+    const pct = toQualityPct(r.overall_score!)!;
+    if (pct >= 60) break;
+    const name = extractAgentName(r);
+    const cnt = badAgentCount.get(name) ?? 0;
+    if (cnt < 3) {
+      badCalls.push(toEntry(r));
+      badAgentCount.set(name, cnt + 1);
+    }
+    if (badCalls.length >= 30) break;
+  }
+
+  return { goodCalls, badCalls };
+}
+
+function renderCallCard(c: CallEntry, accent: string): string {
+  return `<div style="border:1px solid #e5e7eb;border-left:3px solid ${accent};border-radius:8px;padding:12px 14px;margin-bottom:10px">
+<table width="100%" cellpadding="0" cellspacing="0"><tr>
+<td style="font-size:13px;font-weight:600;color:#111">${c.mobile}&nbsp;<span style="color:#888;font-weight:400">${c.agentName}</span></td>
+<td align="right" style="font-size:14px;font-weight:700;color:${scoreColor(c.pct)}">${c.pct}%</td>
+</tr></table>
+<p style="margin:6px 0 0;font-size:13px;color:#555;line-height:1.5">${c.summary}</p>
+${c.lacking ? `<p style="margin:6px 0 0;font-size:12px;color:#999"><b>What was lacking:</b> ${c.lacking}</p>` : ""}
+</div>`;
 }
 
 export async function generateAndSendReport(opts: {
@@ -171,13 +259,11 @@ export async function generateAndSendReport(opts: {
   const rows = exportData ?? [];
   const allRows = (statData ?? []) as unknown as StatRow[];
 
+  // ── Agent breakdown table ────────────────────────────────────────────────
   type AgentStat = { total: number; scores: number[]; good: number; poor: number };
   const agentMap = new Map<string, AgentStat>();
   for (const r of allRows) {
-    const agentsVal = r.agents;
-    const name = Array.isArray(agentsVal)
-      ? (agentsVal[0]?.name ?? "Unknown")
-      : (agentsVal as { name: string } | null)?.name ?? "Unknown";
+    const name = extractAgentName(r);
     if (!agentMap.has(name)) agentMap.set(name, { total: 0, scores: [], good: 0, poor: 0 });
     const ag = agentMap.get(name)!;
     ag.total++;
@@ -212,23 +298,10 @@ export async function generateAndSendReport(opts: {
         )
       : null;
 
-  const coaching = allRows
-    .filter((r) => r.overall_score != null && r.summary)
-    .slice(0, 10)
-    .map((r) => {
-      const agentsVal = r.agents;
-      const agentName = Array.isArray(agentsVal)
-        ? (agentsVal[0]?.name ?? "Unknown")
-        : (agentsVal as { name: string } | null)?.name ?? "Unknown";
-      return {
-        mobile: r.mobile_number ?? "—",
-        agentName,
-        pct: toQualityPct(r.overall_score!)!,
-        summary: r.summary!,
-        lacking: r.what_was_lacking,
-      };
-    });
+  // ── Good / bad call lists ────────────────────────────────────────────────
+  const { goodCalls, badCalls } = buildCallLists(allRows);
 
+  // ── HTML assembly ────────────────────────────────────────────────────────
   const displayDate = fmtDate(opts.istDate);
   const avgColor = scoreColor(avgPct);
 
@@ -248,21 +321,18 @@ export async function generateAndSendReport(opts: {
     )
     .join("");
 
-  const coachingHtml =
-    coaching.length > 0
-      ? coaching
-          .map(
-            (c) =>
-              `<div style="border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px;margin-bottom:10px">
-<table width="100%" cellpadding="0" cellspacing="0"><tr>
-<td style="font-size:13px;font-weight:600;color:#111">${c.mobile}&nbsp;<span style="color:#888;font-weight:400">${c.agentName}</span></td>
-<td align="right" style="font-size:14px;font-weight:700;color:${scoreColor(c.pct)}">${c.pct}%</td>
-</tr></table>
-<p style="margin:6px 0 0;font-size:13px;color:#555;line-height:1.5">${c.summary}</p>
-${c.lacking ? `<p style="margin:6px 0 0;font-size:12px;color:#999"><b>What was lacking:</b> ${c.lacking}</p>` : ""}
-</div>`,
-          )
-          .join("")
+  const goodCallsHtml =
+    goodCalls.length > 0
+      ? `<p style="margin:0 0 10px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.07em;font-weight:600">⭐ Good calls — what worked</p>` +
+        goodCalls.map((c) => renderCallCard(c, "#16a34a")).join("") +
+        `<div style="margin-bottom:24px"></div>`
+      : "";
+
+  const badCallsHtml =
+    badCalls.length > 0
+      ? `<p style="margin:0 0 10px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.07em;font-weight:600">🔻 Needs coaching — all processes</p>` +
+        badCalls.map((c) => renderCallCard(c, "#dc2626")).join("") +
+        `<div style="margin-bottom:24px"></div>`
       : "";
 
   const html = `<!DOCTYPE html>
@@ -301,7 +371,8 @@ ${c.lacking ? `<p style="margin:6px 0 0;font-size:12px;color:#999"><b>What was l
 </tr></thead>
 <tbody>${agentTableRows}</tbody>
 </table>
-${coachingHtml ? `<p style="margin:0 0 10px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.07em;font-weight:600">Needs coaching — lowest scoring calls</p>${coachingHtml}` : ""}
+${goodCallsHtml}
+${badCallsHtml}
 <p style="margin:24px 0 0;font-size:12px;color:#aaa;border-top:1px solid #f0f0f0;padding-top:16px">Full audit data attached as Excel file. Sent automatically by Otis.</p>
 </div>
 </div>
