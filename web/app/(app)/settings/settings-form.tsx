@@ -49,9 +49,10 @@ export default function SettingsForm({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Could not send test");
+      const total = (data.inboundCount ?? 0) + (data.outboundCount ?? 0);
       setMsg({
         tone: "ok",
-        text: `Test sent — ${data.count} audit${data.count === 1 ? "" : "s"} for ${data.date}. Check the inbox.`,
+        text: `Test sent — ${data.inboundCount ?? 0} inbound + ${data.outboundCount ?? 0} outbound audits for ${data.date}. Check the inbox.`,
       });
     } catch (err) {
       setMsg({ tone: "err", text: err instanceof Error ? err.message : String(err) });
@@ -184,4 +185,4 @@ function Field({
       {hint && <p className="text-xs text-zinc-500 mt-2">{hint}</p>}
     </div>
   );
-}
+          }
