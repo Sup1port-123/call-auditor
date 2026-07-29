@@ -203,6 +203,64 @@ export function getComplianceChecks(agentName?: string | null): ComplianceCheckD
   return SCRIPT_COMPLIANCE_CHECKS;
 }
 
+
+// ---------- Inbound-specific Compliance Checks --------------------------------
+// Additional binary checks applied ONLY to Inbound Support calls.
+// Covers: query reason identification, callback protocol, script adherence.
+
+export const INBOUND_COMPLIANCE_CHECKS: ComplianceCheckDef[] = [
+  {
+    key: "identified_query_type",
+    name: "Identified Customer Query Type",
+    instruction:
+      "Did the agent correctly identify and acknowledge the specific reason the GP (customer) was calling? " +
+      "Examples: loan status enquiry, app login issue, payout delay, product information, callback request, complaint. " +
+      "The agent should have explicitly confirmed the query type before proceeding to resolution. " +
+      "Mark FAIL if the agent never established or confirmed the reason for the call.",
+  },
+  {
+    key: "asked_gp_reason_before_callback",
+    name: "Asked GP Reason Before Arranging Callback",
+    instruction:
+      "If the call involved arranging a callback, scheduling a follow-up, or transferring/escalating to another team: " +
+      "did the agent FIRST ask the GP's specific reason or concern before arranging it? " +
+      "(e.g. 'Aapko kaunsi problem aa rahi hai?' before saying 'Main callback schedule karta hoon'.) " +
+      "Mark FAIL if a callback or escalation was arranged without the agent first understanding the GP's reason. " +
+      "Mark PASS with evidence 'not applicable — no callback arranged' if no callback occurred on this call.",
+  },
+  {
+    key: "followed_inbound_script",
+    name: "Followed Complete Inbound Call Script",
+    instruction:
+      "Did the agent follow the complete inbound call script as specified in the knowledge base? " +
+      "Mandatory script steps: (1) greeting with agent's own name + Gromo company name, " +
+      "(2) proactively ask and identify the GP's query, " +
+      "(3) provide resolution or correctly escalate per KB protocol, " +
+      "(4) ask if further assistance is needed, " +
+      "(5) request call feedback, " +
+      "(6) professional closing. " +
+      "Mark FAIL if any of these mandatory steps from the KB was clearly skipped or done incorrectly.",
+  },
+];
+
+/** Returns true if the agent name indicates an inbound support agent. */
+export function isInboundAgent(agentName?: string | null): boolean {
+  if (!agentName) return false;
+  return agentName.toLowerCase().includes("inbound");
+}
+
+/**
+ * Returns the appropriate compliance checks for the given agent.
+ * Inbound agents get the base 6 checks + 3 inbound-specific checks (9 total).
+ * Outbound agents get just the base 6.
+ */
+export function getComplianceChecks(agentName?: string | null): ComplianceCheckDef[] {
+  if (isInboundAgent(agentName)) {
+    return [...SCRIPT_COMPLIANCE_CHECKS, ...INBOUND_COMPLIANCE_CHECKS];
+  }
+  return SCRIPT_COMPLIANCE_CHECKS;
+}
+
 // ---- Per-agent rubric parsing / validation --------------------------------
 
 function slugifyKey(source: string, taken: Set<string>): string {
