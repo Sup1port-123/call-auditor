@@ -38,11 +38,22 @@ async function sendEmail(opts: {
   if (!res.ok) throw new Error(`Resend ${res.status}: ${(await res.text()).slice(0, 300)}`);
 }
 
+// Convert 1-5 score to 0-100%
+function toQualityPct(s: number | null): string {
+  if (s == null) return "—";
+  return `${Math.round((s / 5) * 100)}%`;
+}
+
+function scoreColor(s: number | null): string {
+  if (s == null) return "#888";
+  const pct = Math.round((s / 5) * 100);
+  return pct >= 80 ? "#16a34a" : pct >= 60 ? "#ca8a04" : "#dc2626";
+}
+
 export async function POST(req: Request, { params }: { params: { id: string } }) {
   const { id } = params;
   const supabase = createAdminClient();
 
-  // Fetch batch info
   const { data: batch } = await supabase
     .from("batches")
     .select("id, label, custom_focus")
@@ -50,14 +61,12 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     .maybeSingle();
   if (!batch) return NextResponse.json({ error: "batch not found" }, { status: 404 });
 
-  // Fetch all audits for this batch
   const { data: audits } = await supabase
     .from("audits")
     .select("call_id, mobile_number, overall_score, summary, what_was_lacking, status, error_message")
     .eq("batch_id", id)
     .order("overall_score", { ascending: true, nullsFirst: false });
 
-  // Get recipients from report_settings
   const { data: settings } = await supabase.from("report_settings").select("emails").maybeSingle();
   const recipients = parseEmails(settings?.emails);
   if (recipients.length === 0) return NextResponse.json({ skipped: "no recipients configured" });
@@ -65,13 +74,11 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   const rows = audits ?? [];
   const completed = rows.filter((r) => r.status === "completed");
   const failed = rows.filter((r) => r.status === "failed");
-  const avgScore =
-    completed.length > 0
-      ? (completed.reduce((s, r) => s + (r.overall_score ?? 0), 0) / completed.length).toFixed(1)
-      : "—";
 
-  const scoreColor = (s: number | null) =>
-    s == null ? "#888" : s >= 7 ? "#16a34a" : s >= 5 ? "#ca8a04" : "#dc2626";
+  const avgPct =
+    completed.length > 0
+      ? `${Math.round((completed.reduce((s, r) => s + (r.overall_score ?? 0), 0) / completed.length / 5) * 100)}%`
+      : "—";
 
   const auditRows = rows
     .map(
@@ -79,7 +86,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     <tr style="border-bottom:1px solid #e5e7eb;">
       <td style="padding:8px 10px;font-size:13px;color:#555;">${r.call_id ?? "—"}</td>
       <td style="padding:8px 10px;font-size:13px;color:#555;">${r.mobile_number ?? "—"}</td>
-      <td style="padding:8px 10px;text-align:center;font-weight:700;color:${scoreColor(r.overall_score)};">${r.overall_score ?? "—"}</td>
+      <td style="padding:8px 10px;text-align:center;font-weight:700;color:${scoreColor(r.overall_score)};">${toQualityPct(r.overall_score)}</td>
       <td style="padding:8px 10px;font-size:13px;color:#444;">${r.summary ?? (r.error_message ? `<span style="color:#dc2626;">${r.error_message}</span>` : "—")}</td>
       <td style="padding:8px 10px;font-size:13px;color:#dc2626;">${r.what_was_lacking ?? "—"}</td>
     </tr>`,
@@ -110,8 +117,8 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       <div style="font-size:28px;font-weight:800;color:#dc2626;">${failed.length}</div>
     </div>
     <div style="background:#f0fdf4;border-radius:12px;padding:14px 20px;min-width:120px;">
-      <div style="font-size:12px;color:#888;text-transform:uppercase;letter-spacing:0.1em;">Avg Score</div>
-      <div style="font-size:28px;font-weight:800;color:#16a34a;">${avgScore}</div>
+      <div style="font-size:12px;color:#888;text-transform:uppercase;letter-spacing:0.1em;">Avg Quality</div>
+      <div style="font-size:28px;font-weight:800;color:#16a34a;">${avgPct}</div>
     </div>
   </div>
   <h2 style="font-size:15px;font-weight:700;color:#111;margin:0 0 8px 0;">Per-Call Breakdown</h2>
@@ -120,7 +127,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       <tr style="background:#f3f4f6;text-align:left;">
         <th style="padding:9px 10px;">Call ID</th>
         <th style="padding:9px 10px;">Mobile</th>
-        <th style="padding:9px 10px;text-align:center;">Score</th>
+        <th style="padding:9px 10px;text-align:center;">Quality %</th>
         <th style="padding:9px 10px;">Summary</th>
         <th style="padding:9px 10px;color:#dc2626;">What Was Lacking</th>
       </tr>
@@ -141,4 +148,4 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     const message = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: message }, { status: 500 });
   }
-}
+                             }
