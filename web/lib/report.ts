@@ -1,5 +1,10 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { buildAuditsXlsx, AUDIT_EXPORT_COLUMNS } from "@/lib/audit-export";
+import {
+  SCRIPT_COMPLIANCE_CHECKS,
+  INBOUND_COMPLIANCE_CHECKS,
+  isInboundAgent,
+} from "@/lib/rubric";
 
 export type ReportSettings = {
   id: string;
@@ -11,9 +16,14 @@ export type ReportSettings = {
   updated_at: string | null;
 };
 
+// India Standard Time is a fixed UTC+5:30 (no DST), so we can shift the clock
+// directly rather than pulling in a tz library.
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
-export function istParts(nowMs = Date.now()): { date: string; minutes: number } {
+export function istParts(nowMs = Date.now()): {
+  date: string; // YYYY-MM-DD in IST
+  minutes: number; // minutes since IST midnight
+} {
   const d = new Date(nowMs + IST_OFFSET_MS);
   return {
     date: d.toISOString().slice(0, 10),
@@ -21,6 +31,7 @@ export function istParts(nowMs = Date.now()): { date: string; minutes: number } 
   };
 }
 
+// UTC bounds for a given IST calendar day.
 export function istDayRangeUtc(istDate: string): { gte: string; lte: string } {
   return {
     gte: new Date(`${istDate}T00:00:00+05:30`).toISOString(),
@@ -28,6 +39,7 @@ export function istDayRangeUtc(istDate: string): { gte: string; lte: string } {
   };
 }
 
+// "HH:MM" → minutes since midnight, or null if malformed.
 export function parseHHMM(v: string | null | undefined): number | null {
   if (!v) return null;
   const m = /^(\d{1,2}):(\d{2})$/.exec(v.trim());
@@ -45,6 +57,38 @@ export function parseEmails(raw: string | null | undefined): string[] {
     .map((s) => s.trim())
     .filter((s) => /.+@.+\..+/.test(s));
 }
+
+// Lightweight row type for report HTML building (not the full XLSX export row)
+type ReportRow = {
+  id: string;
+  overall_score: number | null;
+  summary: string | null;
+  what_was_lacking: string | null;
+  target: string | null;
+  agent_id: string | null;
+  compliance_json: string | null;
+  agents: { name: string } | { name: string }[] | null;
+};
+
+function extractAgentName(row: ReportRow): string {
+  if (!row.agents) return "Unknown Agent";
+  if (Array.isArray(row.agents)) return row.agents[0]?.name ?? "Unknown Agent";
+  return (row.agents as { name: string }).name ?? "Unknown Agent";
+}
+
+function extractCallReason(complianceJson: string | null): string {
+  if (!complianceJson) return "Unknown";
+  try {
+    const parsed = JSON.parse(complianceJson) as Record<string, unknown>;
+    return typeof parsed._call_reason === "string" && parsed._call_reason.trim()
+      ? parsed._call_reason.trim()
+      : "Unknown";
+  } catch {
+    return "Unknown";
+  }
+}
+
+// ---- Email transport ---------------------------------------------------------
 
 async function sendReportEmail(opts: {
   to: string[];
@@ -76,7 +120,11 @@ async function sendReportEmail(opts: {
   }
 
   const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) throw new Error("No email transport configured.");
+  if (!apiKey) {
+    throw new Error(
+      "No email transport configured. Set SMTP_USER + SMTP_PASS or RESEND_API_KEY.",
+    );
+  }
   if (!from) throw new Error("REPORT_FROM_EMAIL is not set");
 
   const base64 = Buffer.from(opts.xlsx).toString("base64");
@@ -84,7 +132,10 @@ async function sendReportEmail(opts: {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      from, to: opts.to, subject: opts.subject, html: opts.html,
+      from,
+      to: opts.to,
+      subject: opts.subject,
+      html: opts.html,
       attachments: [{ filename: opts.filename, content: base64 }],
     }),
   });
@@ -94,320 +145,528 @@ async function sendReportEmail(opts: {
   }
 }
 
-type StatRow = {
-  overall_score: number | null;
-  summary: string | null;
-  what_was_lacking: string | null;
-  mobile_number: string | null;
-  agents: { name: string } | { name: string }[] | null;
-};
+// ---- Shared HTML helpers ----------------------------------------------------
 
-type CallEntry = {
-  mobile: string;
-  agentName: string;
-  pct: number;
-  summary: string;
-  lacking: string | null;
-};
-
-type ProcessGroup = {
-  agentName: string;
-  avgPct: number;
-  calls: CallEntry[];
-};
-
-function scoreColor(pct: number | null): string {
-  if (pct == null) return "#888888";
-  return pct >= 80 ? "#16a34a" : pct >= 60 ? "#ca8a04" : "#dc2626";
-}
-
-function toQualityPct(score: number | null): number | null {
-  if (score == null) return null;
+function pct(score: number | null): number {
+  if (score == null) return 0;
   return Math.round((score / 5) * 100);
 }
 
-function fmtDate(istDate: string): string {
-  return new Date(`${istDate}T12:00:00+05:30`).toLocaleDateString("en-IN", {
-    day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Kolkata",
-  });
+function scoreColor(score: number | null): string {
+  if (score == null) return "#6b7280";
+  const p = pct(score);
+  return p >= 80 ? "#16a34a" : p >= 60 ? "#ca8a04" : "#dc2626";
 }
 
-function extractAgentName(r: StatRow): string {
-  const v = r.agents;
-  return Array.isArray(v)
-    ? (v[0]?.name ?? "Unknown")
-    : (v as { name: string } | null)?.name ?? "Unknown";
-}
-
-function toEntry(r: StatRow): CallEntry {
-  return {
-    mobile: r.mobile_number ?? "—",
-    agentName: extractAgentName(r),
-    pct: toQualityPct(r.overall_score!)!,
-    summary: r.summary!,
-    lacking: r.what_was_lacking ?? null,
-  };
-}
-
-/**
- * Groups calls by process/agent.
- * Good: score ≥ 80%, up to 3 per agent.
- * Bad:  score < 60%, up to 3 per agent — ALL agents always appear.
- * Each group sorted worst→best (bad) or best→worst (good).
- */
-function buildProcessGroups(allRows: StatRow[]): {
-  goodGroups: ProcessGroup[];
-  badGroups: ProcessGroup[];
-} {
-  // Only rows with a score and a real summary
-  const eligible = allRows.filter(
-    (r) => r.overall_score != null && r.summary && r.summary.trim().length > 20,
-  );
-
-  // Build per-agent buckets
-  const goodMap = new Map<string, CallEntry[]>();
-  const badMap  = new Map<string, CallEntry[]>();
-
-  // Sort descending for good, ascending for bad
-  const desc = [...eligible].sort((a, b) => (b.overall_score ?? 0) - (a.overall_score ?? 0));
-  const asc  = [...eligible].sort((a, b) => (a.overall_score ?? 0) - (b.overall_score ?? 0));
-
-  for (const r of desc) {
-    const pct  = toQualityPct(r.overall_score!)!;
-    if (pct < 80) break;
-    const name = extractAgentName(r);
-    if (!goodMap.has(name)) goodMap.set(name, []);
-    const bucket = goodMap.get(name)!;
-    if (bucket.length < 3) bucket.push(toEntry(r));
-  }
-
-  for (const r of asc) {
-    const pct  = toQualityPct(r.overall_score!)!;
-    if (pct >= 60) break;
-    const name = extractAgentName(r);
-    if (!badMap.has(name)) badMap.set(name, []);
-    const bucket = badMap.get(name)!;
-    if (bucket.length < 3) bucket.push(toEntry(r));
-  }
-
-  function toGroups(map: Map<string, CallEntry[]>, sortAsc: boolean): ProcessGroup[] {
-    return [...map.entries()]
-      .map(([agentName, calls]) => ({
-        agentName,
-        avgPct: Math.round(calls.reduce((s, c) => s + c.pct, 0) / calls.length),
-        calls,
-      }))
-      .sort((a, b) => sortAsc ? a.avgPct - b.avgPct : b.avgPct - a.avgPct);
-  }
-
-  return {
-    goodGroups: toGroups(goodMap, false), // best agents first
-    badGroups:  toGroups(badMap,  true),  // worst agents first
-  };
-}
-
-function renderCallCard(c: CallEntry, accent: string): string {
+function scoreBar(score: number | null): string {
+  const p = pct(score);
+  const color = scoreColor(score);
   return `
-<div style="border:1px solid #e5e7eb;border-left:4px solid ${accent};border-radius:6px;padding:11px 14px;margin-bottom:8px;background:#fafafa;">
-  <table width="100%" cellpadding="0" cellspacing="0">
-    <tr>
-      <td style="font-size:13px;font-weight:600;color:#111;">📞 ${c.mobile}</td>
-      <td align="right" style="font-size:14px;font-weight:700;color:${scoreColor(c.pct)};">${c.pct}%</td>
-    </tr>
-  </table>
-  <p style="margin:6px 0 0;font-size:13px;color:#444;line-height:1.55;">${c.summary}</p>
-  ${c.lacking ? `<p style="margin:5px 0 0;font-size:12px;color:#888;"><b style="color:#666;">Gap:</b> ${c.lacking}</p>` : ""}
-</div>`;
+    <div style="background:#e5e7eb;border-radius:4px;height:8px;width:100%;max-width:100px;display:inline-block;">
+      <div style="background:${color};border-radius:4px;height:8px;width:${p}%;"></div>
+    </div>`;
 }
 
-function renderProcessSection(
-  groups: ProcessGroup[],
+function emailHeader(title: string, subtitle: string, accentColor: string): string {
+  return `
+  <div style="background:${accentColor};padding:28px 32px;border-radius:8px 8px 0 0;">
+    <div style="color:#fff;font-size:22px;font-weight:700;letter-spacing:-0.5px;">${title}</div>
+    <div style="color:rgba(255,255,255,0.8);font-size:13px;margin-top:4px;">${subtitle}</div>
+  </div>`;
+}
+
+function statsRow(stats: { label: string; value: string | number; color?: string }[]): string {
+  const cells = stats.map(s => `
+    <td style="padding:16px 20px;text-align:center;">
+      <div style="font-size:26px;font-weight:700;color:${s.color ?? "#111"};">${s.value}</div>
+      <div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;margin-top:2px;">${s.label}</div>
+    </td>`).join(`<td style="width:1px;background:#e5e7eb;padding:0;"></td>`);
+  return `
+  <table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #e5e7eb;border-top:none;">
+    <tr>${cells}</tr>
+  </table>`;
+}
+
+type CallEntry = { target: string | null; score: number | null; summary: string | null; lacking: string | null };
+type AgentGroup = { agentName: string; avgScore: number; calls: CallEntry[] };
+
+function buildAgentGroups(
+  rows: ReportRow[],
+  filter: (score: number) => boolean,
+  sort: "asc" | "desc",
+  maxCallsPerAgent = 3,
+): AgentGroup[] {
+  const map = new Map<string, { scores: number[]; calls: CallEntry[] }>();
+
+  for (const row of rows) {
+    const name = extractAgentName(row);
+    const score = row.overall_score;
+    if (score == null || !filter(score)) continue;
+    if (!map.has(name)) map.set(name, { scores: [], calls: [] });
+    const entry = map.get(name)!;
+    entry.scores.push(score);
+    entry.calls.push({
+      target: row.target,
+      score,
+      summary: row.summary,
+      lacking: row.what_was_lacking,
+    });
+  }
+
+  return Array.from(map.entries())
+    .map(([agentName, { scores, calls }]) => ({
+      agentName,
+      avgScore: scores.reduce((a, b) => a + b, 0) / scores.length,
+      calls: (sort === "asc"
+        ? calls.sort((a, b) => (a.score ?? 0) - (b.score ?? 0))
+        : calls.sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+      ).slice(0, maxCallsPerAgent),
+    }))
+    .sort((a, b) =>
+      sort === "asc" ? a.avgScore - b.avgScore : b.avgScore - a.avgScore,
+    );
+}
+
+function renderCallCard(call: CallEntry, accent: string): string {
+  const p = pct(call.score);
+  const color = scoreColor(call.score);
+  const label = call.target
+    ? call.target.replace(/^https?:\/\/[^/]+\//, "").slice(0, 60)
+    : "Unknown call";
+  return `
+  <div style="border-left:3px solid ${accent};padding:10px 14px;margin:8px 0;background:#fafafa;border-radius:0 4px 4px 0;">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+      <span style="font-size:12px;color:#555;word-break:break-all;">${label}</span>
+      <span style="font-size:14px;font-weight:700;color:${color};white-space:nowrap;">${p}%</span>
+    </div>
+    ${call.summary ? `<div style="font-size:12px;color:#374151;margin-top:4px;">${call.summary}</div>` : ""}
+    ${call.lacking ? `<div style="font-size:11px;color:#dc2626;margin-top:3px;">⚠ ${call.lacking}</div>` : ""}
+  </div>`;
+}
+
+function renderCallSection(
+  groups: AgentGroup[],
   emoji: string,
   title: string,
   accent: string,
 ): string {
   if (groups.length === 0) return "";
-
-  const groupsHtml = groups
-    .map((g) => `
-<div style="margin-bottom:18px;">
-  <div style="background:#f0f0f0;border-radius:5px;padding:7px 12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
-    <span style="font-size:13px;font-weight:700;color:#111;">${g.agentName}</span>
-    <span style="font-size:12px;font-weight:600;color:${scoreColor(g.avgPct)};">${g.avgPct}% avg</span>
-  </div>
-  ${g.calls.map((c) => renderCallCard(c, accent)).join("")}
-</div>`)
-    .join("");
+  const agentBlocks = groups.map(g => {
+    const cards = g.calls.map(c => renderCallCard(c, accent)).join("");
+    return `
+    <div style="margin-bottom:20px;">
+      <div style="font-size:14px;font-weight:600;color:#111;margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid #e5e7eb;">
+        ${g.agentName}
+        <span style="font-weight:400;color:#6b7280;font-size:12px;margin-left:8px;">avg ${Math.round(g.avgScore * 20)}%</span>
+      </div>
+      ${cards}
+    </div>`;
+  }).join("");
 
   return `
-<div style="margin-bottom:28px;">
-  <p style="margin:0 0 12px;font-size:12px;color:#555;text-transform:uppercase;letter-spacing:0.07em;font-weight:700;border-bottom:2px solid #e5e7eb;padding-bottom:6px;">${emoji} ${title}</p>
-  ${groupsHtml}
-</div>`;
+  <h2 style="color:#111;font-size:16px;margin:32px 0 10px 0;font-weight:700;">${emoji} ${title}</h2>
+  ${agentBlocks}`;
 }
 
+function renderAgentTable(rows: ReportRow[]): string {
+  const map = new Map<string, number[]>();
+  for (const row of rows) {
+    const name = extractAgentName(row);
+    if (row.overall_score == null) continue;
+    if (!map.has(name)) map.set(name, []);
+    map.get(name)!.push(row.overall_score);
+  }
+
+  const agents = Array.from(map.entries())
+    .map(([name, scores]) => ({
+      name,
+      count: scores.length,
+      avg: scores.reduce((a, b) => a + b, 0) / scores.length,
+    }))
+    .sort((a, b) => b.avg - a.avg);
+
+  if (agents.length === 0) return "";
+
+  const rowsHtml = agents.map(a => {
+    const p = Math.round(a.avg * 20);
+    const color = scoreColor(a.avg);
+    return `
+    <tr style="border-bottom:1px solid #e5e7eb;">
+      <td style="padding:10px 12px;font-weight:500;">${a.name}</td>
+      <td style="padding:10px 12px;text-align:center;">${a.count}</td>
+      <td style="padding:10px 12px;">
+        ${scoreBar(a.avg)}
+      </td>
+      <td style="padding:10px 12px;text-align:center;font-weight:700;color:${color};">${p}%</td>
+    </tr>`;
+  }).join("");
+
+  return `
+  <h2 style="color:#111;font-size:16px;margin:28px 0 10px 0;font-weight:700;">📋 Agent Performance</h2>
+  <table style="width:100%;border-collapse:collapse;font-size:13px;background:#fff;border:1px solid #e5e7eb;">
+    <thead>
+      <tr style="background:#f3f4f6;text-align:left;">
+        <th style="padding:10px 12px;">Agent</th>
+        <th style="padding:10px 12px;text-align:center;">Calls</th>
+        <th style="padding:10px 12px;">Score</th>
+        <th style="padding:10px 12px;text-align:center;">Avg %</th>
+      </tr>
+    </thead>
+    <tbody>${rowsHtml}</tbody>
+  </table>`;
+}
+
+// ---- Inbound-specific sections ----------------------------------------------
+
+function renderQueryReasons(rows: ReportRow[]): string {
+  const reasons = new Map<string, number>();
+  for (const row of rows) {
+    const reason = extractCallReason(row.compliance_json);
+    const key = reason.toLowerCase().trim();
+    if (key === "unknown" || key === "") continue;
+    // Normalize slightly
+    const display = reason.charAt(0).toUpperCase() + reason.slice(1);
+    reasons.set(display, (reasons.get(display) ?? 0) + 1);
+  }
+
+  if (reasons.size === 0) return "";
+
+  const sorted = Array.from(reasons.entries()).sort((a, b) => b[1] - a[1]);
+  const total = sorted.reduce((s, [, c]) => s + c, 0);
+
+  const reasonRows = sorted.map(([reason, count]) => {
+    const p = total > 0 ? Math.round((count / total) * 100) : 0;
+    return `
+    <tr style="border-bottom:1px solid #e5e7eb;">
+      <td style="padding:9px 12px;">${reason}</td>
+      <td style="padding:9px 12px;text-align:center;font-weight:600;">${count}</td>
+      <td style="padding:9px 12px;">
+        <div style="background:#e5e7eb;border-radius:4px;height:10px;width:100%;max-width:160px;">
+          <div style="background:#6366f1;border-radius:4px;height:10px;width:${p}%;"></div>
+        </div>
+      </td>
+      <td style="padding:9px 12px;text-align:center;color:#6b7280;">${p}%</td>
+    </tr>`;
+  }).join("");
+
+  return `
+  <h2 style="color:#111;font-size:16px;margin:28px 0 10px 0;font-weight:700;">📊 Major Query Reasons</h2>
+  <p style="color:#555;font-size:13px;margin:0 0 10px 0;">Why GPs called today (${total} calls with identified reasons)</p>
+  <table style="width:100%;border-collapse:collapse;font-size:13px;background:#fff;border:1px solid #e5e7eb;">
+    <thead>
+      <tr style="background:#f3f4f6;text-align:left;">
+        <th style="padding:9px 12px;">Query Reason</th>
+        <th style="padding:9px 12px;text-align:center;">Count</th>
+        <th style="padding:9px 12px;">Distribution</th>
+        <th style="padding:9px 12px;text-align:center;">%</th>
+      </tr>
+    </thead>
+    <tbody>${reasonRows}</tbody>
+  </table>`;
+}
+
+function renderInboundComplianceSection(rows: ReportRow[]): string {
+  const allChecks = [...SCRIPT_COMPLIANCE_CHECKS, ...INBOUND_COMPLIANCE_CHECKS];
+  const withData = rows.filter(r => r.compliance_json && r.compliance_json !== "{}");
+  if (withData.length === 0) return "";
+
+  const passCounts: Record<string, number> = {};
+  for (const check of allChecks) passCounts[check.key] = 0;
+
+  for (const row of withData) {
+    try {
+      const parsed = JSON.parse(row.compliance_json ?? "{}") as Record<string, { passed?: boolean }>;
+      for (const check of allChecks) {
+        if (parsed[check.key]?.passed === true) passCounts[check.key]++;
+      }
+    } catch { /* skip */ }
+  }
+
+  const total = withData.length;
+
+  const sections = [
+    { label: "Standard Script Checks", checks: SCRIPT_COMPLIANCE_CHECKS },
+    { label: "Inbound-Specific Checks", checks: INBOUND_COMPLIANCE_CHECKS },
+  ];
+
+  const sectionsHtml = sections.map(section => {
+    const rows2 = section.checks.map(check => {
+      const passed = passCounts[check.key] ?? 0;
+      const p = total > 0 ? Math.round((passed / total) * 100) : 0;
+      const barColor = p >= 80 ? "#16a34a" : p >= 50 ? "#ca8a04" : "#dc2626";
+      const emoji = p >= 80 ? "✅" : p >= 50 ? "⚠️" : "❌";
+      return `
+      <tr style="border-bottom:1px solid #e5e7eb;">
+        <td style="padding:9px 12px;">${emoji} ${check.name}</td>
+        <td style="padding:9px 12px;text-align:center;">${passed}/${total}</td>
+        <td style="padding:9px 12px;">
+          <div style="background:#e5e7eb;border-radius:4px;height:10px;width:100%;max-width:160px;">
+            <div style="background:${barColor};border-radius:4px;height:10px;width:${p}%;"></div>
+          </div>
+        </td>
+        <td style="padding:9px 12px;text-align:center;font-weight:700;color:${barColor};">${p}%</td>
+      </tr>`;
+    }).join("");
+
+    return `
+    <tr style="background:#f9fafb;">
+      <td colspan="4" style="padding:8px 12px;font-weight:600;font-size:12px;color:#374151;text-transform:uppercase;letter-spacing:0.5px;">${section.label}</td>
+    </tr>
+    ${rows2}`;
+  }).join("");
+
+  return `
+  <h2 style="color:#111;font-size:16px;margin:28px 0 10px 0;font-weight:700;">✅ Script Compliance — Today's Inbound Calls</h2>
+  <p style="color:#555;font-size:13px;margin:0 0 10px 0;">Pass rates across ${total} audited call${total === 1 ? "" : "s"}</p>
+  <table style="width:100%;border-collapse:collapse;font-size:13px;background:#fff;border:1px solid #e5e7eb;">
+    <thead>
+      <tr style="background:#f3f4f6;text-align:left;">
+        <th style="padding:9px 12px;">Check</th>
+        <th style="padding:9px 12px;text-align:center;">Passed</th>
+        <th style="padding:9px 12px;">Pass Rate</th>
+        <th style="padding:9px 12px;text-align:center;">%</th>
+      </tr>
+    </thead>
+    <tbody>${sectionsHtml}</tbody>
+  </table>`;
+}
+
+// ---- Outbound compliance section (standard 6 checks) ------------------------
+
+function renderOutboundComplianceSection(rows: ReportRow[]): string {
+  const withData = rows.filter(r => r.compliance_json && r.compliance_json !== "{}");
+  if (withData.length === 0) return "";
+
+  const passCounts: Record<string, number> = {};
+  for (const check of SCRIPT_COMPLIANCE_CHECKS) passCounts[check.key] = 0;
+  const total = withData.length;
+
+  for (const row of withData) {
+    try {
+      const parsed = JSON.parse(row.compliance_json ?? "{}") as Record<string, { passed?: boolean }>;
+      for (const check of SCRIPT_COMPLIANCE_CHECKS) {
+        if (parsed[check.key]?.passed === true) passCounts[check.key]++;
+      }
+    } catch { /* skip */ }
+  }
+
+  const checkRows = SCRIPT_COMPLIANCE_CHECKS.map(check => {
+    const passed = passCounts[check.key] ?? 0;
+    const p = total > 0 ? Math.round((passed / total) * 100) : 0;
+    const barColor = p >= 80 ? "#16a34a" : p >= 50 ? "#ca8a04" : "#dc2626";
+    const emoji = p >= 80 ? "✅" : p >= 50 ? "⚠️" : "❌";
+    return `
+    <tr style="border-bottom:1px solid #e5e7eb;">
+      <td style="padding:9px 12px;">${emoji} ${check.name}</td>
+      <td style="padding:9px 12px;text-align:center;">${passed}/${total}</td>
+      <td style="padding:9px 12px;">
+        <div style="background:#e5e7eb;border-radius:4px;height:10px;width:100%;max-width:160px;">
+          <div style="background:${barColor};border-radius:4px;height:10px;width:${p}%;"></div>
+        </div>
+      </td>
+      <td style="padding:9px 12px;text-align:center;font-weight:700;color:${barColor};">${p}%</td>
+    </tr>`;
+  }).join("");
+
+  return `
+  <h2 style="color:#111;font-size:16px;margin:28px 0 10px 0;font-weight:700;">✅ Script Compliance — Today's Outbound Calls</h2>
+  <p style="color:#555;font-size:13px;margin:0 0 10px 0;">Pass rates across ${total} audited call${total === 1 ? "" : "s"}</p>
+  <table style="width:100%;border-collapse:collapse;font-size:13px;background:#fff;border:1px solid #e5e7eb;">
+    <thead>
+      <tr style="background:#f3f4f6;text-align:left;">
+        <th style="padding:9px 12px;">Check</th>
+        <th style="padding:9px 12px;text-align:center;">Passed</th>
+        <th style="padding:9px 12px;">Pass Rate</th>
+        <th style="padding:9px 12px;text-align:center;">%</th>
+      </tr>
+    </thead>
+    <tbody>${checkRows}</tbody>
+  </table>`;
+}
+
+// ---- Date formatting --------------------------------------------------------
+
+function formatDisplayDate(istDate: string): string {
+  // "2026-07-29" → "29 July 2026"
+  try {
+    const d = new Date(`${istDate}T12:00:00+05:30`);
+    return d.toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Kolkata" });
+  } catch {
+    return istDate;
+  }
+}
+
+// ---- Inbound report ---------------------------------------------------------
+
+async function buildInboundHtml(rows: ReportRow[], istDate: string): Promise<string> {
+  const displayDate = formatDisplayDate(istDate);
+  const scored = rows.filter(r => r.overall_score != null);
+  const avgScore = scored.length > 0
+    ? scored.reduce((s, r) => s + (r.overall_score ?? 0), 0) / scored.length
+    : 0;
+  const avgPct = Math.round(avgScore * 20);
+
+  const badGroups = buildAgentGroups(rows, s => s < 3, "asc");
+  const goodGroups = buildAgentGroups(rows, s => s >= 4, "desc");
+
+  const header = emailHeader(
+    `📞 Inbound Support Report — ${displayDate}`,
+    `Otis daily quality audit · ${rows.length} call${rows.length === 1 ? "" : "s"} processed`,
+    "#6366f1",
+  );
+
+  const stats = statsRow([
+    { label: "Total Calls", value: rows.length },
+    { label: "Scored", value: scored.length },
+    { label: "Avg Score", value: `${avgPct}%`, color: avgPct >= 80 ? "#16a34a" : avgPct >= 60 ? "#ca8a04" : "#dc2626" },
+  ]);
+
+  const agentTable = renderAgentTable(rows);
+  const queryReasons = renderQueryReasons(rows);
+  const complianceSection = renderInboundComplianceSection(rows);
+  const badCallsSection = renderCallSection(badGroups, "🔻", "Calls Needing Attention (Score < 60%)", "#dc2626");
+  const goodCallsSection = renderCallSection(goodGroups, "⭐", "Best Calls (Score ≥ 80%)", "#16a34a");
+
+  return `
+  <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:680px;margin:0 auto;color:#111;">
+    ${header}
+    <div style="padding:24px 0;">
+      ${stats}
+      ${agentTable}
+      ${queryReasons}
+      ${complianceSection}
+      ${badCallsSection}
+      ${goodCallsSection}
+      <p style="color:#9ca3af;font-size:11px;margin-top:32px;padding-top:16px;border-top:1px solid #e5e7eb;">
+        Sent automatically by Otis · ${displayDate} IST
+      </p>
+    </div>
+  </div>`;
+}
+
+// ---- Outbound report --------------------------------------------------------
+
+async function buildOutboundHtml(rows: ReportRow[], istDate: string): Promise<string> {
+  const displayDate = formatDisplayDate(istDate);
+  const scored = rows.filter(r => r.overall_score != null);
+  const avgScore = scored.length > 0
+    ? scored.reduce((s, r) => s + (r.overall_score ?? 0), 0) / scored.length
+    : 0;
+  const avgPct = Math.round(avgScore * 20);
+
+  const badGroups = buildAgentGroups(rows, s => s < 3, "asc");
+  const goodGroups = buildAgentGroups(rows, s => s >= 4, "desc");
+
+  const header = emailHeader(
+    `📤 Outbound Calls Report — ${displayDate}`,
+    `Otis daily quality audit · ${rows.length} call${rows.length === 1 ? "" : "s"} processed`,
+    "#0f766e",
+  );
+
+  const stats = statsRow([
+    { label: "Total Calls", value: rows.length },
+    { label: "Scored", value: scored.length },
+    { label: "Avg Score", value: `${avgPct}%`, color: avgPct >= 80 ? "#16a34a" : avgPct >= 60 ? "#ca8a04" : "#dc2626" },
+  ]);
+
+  const agentTable = renderAgentTable(rows);
+  const complianceSection = renderOutboundComplianceSection(rows);
+  const badCallsSection = renderCallSection(badGroups, "🔻", "Calls Needing Attention (Score < 60%)", "#dc2626");
+  const goodCallsSection = renderCallSection(goodGroups, "⭐", "Best Calls (Score ≥ 80%)", "#16a34a");
+
+  return `
+  <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:680px;margin:0 auto;color:#111;">
+    ${header}
+    <div style="padding:24px 0;">
+      ${stats}
+      ${agentTable}
+      ${complianceSection}
+      ${badCallsSection}
+      ${goodCallsSection}
+      <p style="color:#9ca3af;font-size:11px;margin-top:32px;padding-top:16px;border-top:1px solid #e5e7eb;">
+        Sent automatically by Otis · ${displayDate} IST
+      </p>
+    </div>
+  </div>`;
+}
+
+// ---- Public API -------------------------------------------------------------
+
+/**
+ * Generates and sends separate inbound and outbound daily reports.
+ * Both go to the same recipient list; subjects distinguish them.
+ * Returns counts for each report type.
+ */
 export async function generateAndSendReport(opts: {
   emails: string[];
   istDate: string;
-}): Promise<{ count: number }> {
+}): Promise<{ inboundCount: number; outboundCount: number }> {
   const supabase = createAdminClient();
   const { gte, lte } = istDayRangeUtc(opts.istDate);
 
-  const [
-    { data: exportData, error: exportError },
-    { data: statData,   error: statError   },
-  ] = await Promise.all([
-    supabase
-      .from("audits")
-      .select(AUDIT_EXPORT_COLUMNS)
-      .gte("timestamp", gte)
-      .lte("timestamp", lte)
-      .order("timestamp", { ascending: false })
-      .limit(10000),
-    supabase
-      .from("audits")
-      .select("overall_score, summary, what_was_lacking, mobile_number, agents(name)")
-      .gte("timestamp", gte)
-      .lte("timestamp", lte)
-      .not("overall_score", "is", null)
-      .limit(10000),
-  ]);
+  // Fetch all completed audits for the day with agent info
+  const { data: allRows, error } = await supabase
+    .from("audits")
+    .select("id, overall_score, summary, what_was_lacking, target, agent_id, compliance_json, agents(name)")
+    .gte("timestamp", gte)
+    .lte("timestamp", lte)
+    .in("status", ["completed", "excluded"])
+    .order("timestamp", { ascending: false })
+    .limit(10000);
 
-  if (exportError) throw new Error(exportError.message);
-  if (statError)   throw new Error(statError.message);
+  if (error) throw new Error(error.message);
+  const rows = (allRows ?? []) as unknown as ReportRow[];
 
-  const rows    = exportData ?? [];
-  const allRows = (statData ?? []) as unknown as StatRow[];
+  // Split into inbound and outbound based on agent name
+  const inboundRows = rows.filter(r => isInboundAgent(extractAgentName(r)));
+  const outboundRows = rows.filter(r => !isInboundAgent(extractAgentName(r)));
 
-  // ── Agent summary table ──────────────────────────────────────────────────
-  type AgentStat = { total: number; scores: number[]; good: number; poor: number };
-  const agentMap = new Map<string, AgentStat>();
+  // Fetch XLSX data (all audits) for attachment
+  const { data: xlsxRows } = await supabase
+    .from("audits")
+    .select(AUDIT_EXPORT_COLUMNS)
+    .gte("timestamp", gte)
+    .lte("timestamp", lte)
+    .order("timestamp", { ascending: false })
+    .limit(10000);
 
-  for (const r of allRows) {
-    const name = extractAgentName(r);
-    if (!agentMap.has(name)) agentMap.set(name, { total: 0, scores: [], good: 0, poor: 0 });
-    const ag = agentMap.get(name)!;
-    ag.total++;
-    const pct = toQualityPct(r.overall_score);
-    if (pct != null) {
-      ag.scores.push(pct);
-      if (pct >= 80) ag.good++;
-      else if (pct < 60) ag.poor++;
+  const allXlsx = await buildAuditsXlsx(xlsxRows ?? []);
+
+  const errors: string[] = [];
+
+  // Send inbound report
+  if (inboundRows.length > 0) {
+    try {
+      const html = await buildInboundHtml(inboundRows, opts.istDate);
+      await sendReportEmail({
+        to: opts.emails,
+        subject: `Otis Inbound Report — ${formatDisplayDate(opts.istDate)}`,
+        html,
+        filename: `otis-inbound-${opts.istDate}.xlsx`,
+        xlsx: allXlsx,
+      });
+    } catch (err) {
+      errors.push(`Inbound email failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
-  const agents = [...agentMap.entries()]
-    .map(([name, ag]) => ({
-      name,
-      total:  ag.total,
-      scored: ag.scores.length,
-      avg:    ag.scores.length > 0 ? Math.round(ag.scores.reduce((a, b) => a + b, 0) / ag.scores.length) : null,
-      good:   ag.good,
-      poor:   ag.poor,
-    }))
-    .sort((a, b) => (b.avg ?? -1) - (a.avg ?? -1));
+  // Send outbound report
+  if (outboundRows.length > 0) {
+    try {
+      const html = await buildOutboundHtml(outboundRows, opts.istDate);
+      await sendReportEmail({
+        to: opts.emails,
+        subject: `Otis Outbound Report — ${formatDisplayDate(opts.istDate)}`,
+        html,
+        filename: `otis-outbound-${opts.istDate}.xlsx`,
+        xlsx: allXlsx,
+      });
+    } catch (err) {
+      errors.push(`Outbound email failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
-  const totalScored = allRows.filter((r) => r.overall_score != null).length;
-  const avgPct =
-    totalScored > 0
-      ? Math.round(allRows.filter(r => r.overall_score != null)
-          .reduce((s, r) => s + toQualityPct(r.overall_score!)!, 0) / totalScored)
-      : null;
+  if (errors.length > 0) throw new Error(errors.join("; "));
 
-  // ── Good / bad groups by process ─────────────────────────────────────────
-  const { goodGroups, badGroups } = buildProcessGroups(allRows);
-
-  // ── HTML ─────────────────────────────────────────────────────────────────
-  const displayDate = fmtDate(opts.istDate);
-  const avgColor    = scoreColor(avgPct);
-
-  const agentRows = agents.map((a) => `
-<tr>
-  <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;font-weight:600;color:#111;">${a.name}</td>
-  <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;color:#555;text-align:center;">${a.total}<br><span style="font-size:11px;color:#aaa;">${a.scored} scored</span></td>
-  <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;text-align:center;">
-    <strong style="font-size:16px;color:${scoreColor(a.avg)};">${a.avg != null ? a.avg + "%" : "—"}</strong>
-  </td>
-  <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;text-align:center;color:#16a34a;font-weight:600;">${a.good}</td>
-  <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;text-align:center;color:#dc2626;font-weight:600;">${a.poor}</td>
-</tr>`).join("");
-
-  const goodSectionHtml = renderProcessSection(goodGroups, "⭐", "What Worked — by Process", "#16a34a");
-  const badSectionHtml  = renderProcessSection(badGroups,  "🔻", "Needs Attention — by Process", "#dc2626");
-
-  const html = `<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:20px;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;">
-<div style="max-width:640px;margin:0 auto;background:#fff;border-radius:10px;overflow:hidden;border:1px solid #e5e7eb;">
-
-  <!-- Header -->
-  <div style="background:#111;padding:24px 28px;">
-    <p style="margin:0 0 4px;font-size:11px;color:#aaa;letter-spacing:0.08em;text-transform:uppercase;">Otis · AI Call Auditor</p>
-    <h1 style="margin:0 0 4px;font-size:20px;color:#fff;font-weight:700;">Daily Call Quality Report</h1>
-    <p style="margin:0;font-size:14px;color:#aaa;">Calls on <strong style="color:#fff;">${displayDate}</strong></p>
-  </div>
-
-  <div style="padding:24px 28px;">
-
-    <!-- Stats -->
-    <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
-      <tr>
-        <td style="width:33%;padding-right:6px;">
-          <div style="background:#f9fafb;border-radius:8px;padding:14px 12px;text-align:center;">
-            <p style="margin:0 0 4px;font-size:11px;color:#888;text-transform:uppercase;">Total Calls</p>
-            <p style="margin:0;font-size:26px;font-weight:700;color:#111;">${allRows.length}</p>
-          </div>
-        </td>
-        <td style="width:33%;padding:0 3px;">
-          <div style="background:#f9fafb;border-radius:8px;padding:14px 12px;text-align:center;">
-            <p style="margin:0 0 4px;font-size:11px;color:#888;text-transform:uppercase;">Scored</p>
-            <p style="margin:0;font-size:26px;font-weight:700;color:#111;">${totalScored}</p>
-          </div>
-        </td>
-        <td style="width:33%;padding-left:6px;">
-          <div style="background:#f9fafb;border-radius:8px;padding:14px 12px;text-align:center;">
-            <p style="margin:0 0 4px;font-size:11px;color:#888;text-transform:uppercase;">Avg Quality</p>
-            <p style="margin:0;font-size:26px;font-weight:700;color:${avgColor};">${avgPct != null ? avgPct + "%" : "—"}</p>
-          </div>
-        </td>
-      </tr>
-    </table>
-
-    <!-- Agent breakdown -->
-    <p style="margin:0 0 10px;font-size:12px;color:#555;text-transform:uppercase;letter-spacing:0.07em;font-weight:700;border-bottom:2px solid #e5e7eb;padding-bottom:6px;">📊 Agent Breakdown</p>
-    <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:28px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
-      <thead>
-        <tr style="background:#f9fafb;">
-          <th style="padding:9px 12px;text-align:left;font-size:11px;color:#888;font-weight:600;border-bottom:1px solid #e5e7eb;">Process</th>
-          <th style="padding:9px 12px;text-align:center;font-size:11px;color:#888;font-weight:600;border-bottom:1px solid #e5e7eb;">Calls</th>
-          <th style="padding:9px 12px;text-align:center;font-size:11px;color:#888;font-weight:600;border-bottom:1px solid #e5e7eb;">Avg Quality</th>
-          <th style="padding:9px 12px;text-align:center;font-size:11px;color:#16a34a;font-weight:600;border-bottom:1px solid #e5e7eb;">Good ≥80%</th>
-          <th style="padding:9px 12px;text-align:center;font-size:11px;color:#dc2626;font-weight:600;border-bottom:1px solid #e5e7eb;">Poor &lt;60%</th>
-        </tr>
-      </thead>
-      <tbody>${agentRows}</tbody>
-    </table>
-
-    <!-- Call observations by process -->
-    ${goodSectionHtml}
-    ${badSectionHtml}
-
-    <p style="margin:20px 0 0;font-size:12px;color:#aaa;border-top:1px solid #f0f0f0;padding-top:16px;">
-      Full audit data is attached as an Excel file. Sent automatically by Otis.
-    </p>
-  </div>
-</div>
-</body></html>`;
-
-  const xlsx = await buildAuditsXlsx(rows);
-  await sendReportEmail({
-    to:       opts.emails,
-    subject:  `Otis daily report — ${displayDate}`,
-    html,
-    filename: `otis-audits-${opts.istDate}.xlsx`,
-    xlsx,
-  });
-
-  return { count: rows.length };
-}
+  return { inboundCount: inboundRows.length, outboundCount: outboundRows.length };
+         }
