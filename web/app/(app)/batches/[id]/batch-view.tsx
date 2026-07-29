@@ -201,7 +201,7 @@ export default function BatchView({
                 )}
               </div>
               <div className="text-xs text-zinc-500 w-24 text-right shrink-0 pt-0.5">{a.status ?? "—"}</div>
-              <div className="w-10 text-right shrink-0 pt-0.5"><Score score={a.overall_score} /></div>
+              <div className="w-14 text-right shrink-0 pt-0.5"><Score score={a.overall_score} /></div>
             </Link>
           ))
         )}
@@ -255,6 +255,7 @@ function StatusDot({ status }: { status: string | null }) {
 
 function Score({ score }: { score: number | null }) {
   if (score == null) return <span className="text-xs text-zinc-400">—</span>;
-  const tone = score >= 7 ? "text-emerald-600" : score >= 5 ? "text-amber-600" : "text-rose-600";
-  return <span className={`font-display font-extrabold tabular-nums ${tone}`}>{score}</span>;
-}
+  const pct = Math.round((score / 5) * 100);
+  const tone = pct >= 80 ? "text-emerald-600" : pct >= 60 ? "text-amber-600" : "text-rose-600";
+  return <span className={`font-display font-extrabold tabular-nums ${tone}`}>{pct}%</span>;
+      }
