@@ -20,14 +20,15 @@ export async function GET(req: Request) {
     const url = new URL(req.url);
     const key = url.searchParams.get("key");
     const force = url.searchParams.get("force") === "1";
-    const dateParam = url.searchParams.get("date");
 
     const secret = process.env.CRON_SECRET;
+    // Two callers: Vercel Cron (sends "Authorization: Bearer $CRON_SECRET")
+    // and an external scheduler (passes ?key=). The Vercel cron IS the
+    // schedule, so it bypasses the per-minute send-time gate below.
     const viaVercelCron =
       !!secret && req.headers.get("authorization") === `Bearer ${secret}`;
     const viaKey = !!secret && key === secret;
-    const viaBypass = key === "otis-report-2026";
-    if (!viaVercelCron && !viaKey && !viaBypass) {
+    if (!viaVercelCron && !viaKey) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
 
@@ -52,17 +53,13 @@ export async function GET(req: Request) {
 
     const { date, minutes } = istParts();
 
-    // Report on YESTERDAY's calls — the cron runs at 7am IST so today's
-    // workday has barely started; yesterday's data is what's complete.
-    const yesterday = istParts(Date.now() - 24 * 60 * 60 * 1000);
-    const reportDate = dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)
-      ? dateParam
-      : yesterday.date;
-
-    if (!force && !viaBypass) {
-      if (settings.last_sent_date === reportDate) {
-        return NextResponse.json({ skipped: "already sent today", date: reportDate });
+    if (!force) {
+      if (settings.last_sent_date === date) {
+        return NextResponse.json({ skipped: "already sent today", date });
       }
+      // The Vercel cron runs once at its configured time, so its firing IS the
+      // send time — only the external ?key= scheduler (pinging every ~15 min)
+      // needs the per-minute gate.
       if (!viaVercelCron) {
         const target = parseHHMM(settings.send_time);
         if (target == null) {
@@ -78,16 +75,25 @@ export async function GET(req: Request) {
       }
     }
 
-    const { count } = await generateAndSendReport({ emails, istDate: reportDate });
+    // Send separate inbound + outbound reports
+    const { inboundCount, outboundCount } = await generateAndSendReport({
+      emails,
+      istDate: date,
+    });
 
-    if (!force && !viaBypass) {
+    if (!force) {
       await supabase
         .from("report_settings")
-        .update({ last_sent_date: reportDate })
+        .update({ last_sent_date: date })
         .eq("id", "default");
     }
 
-    return NextResponse.json({ sent: true, count, date: reportDate });
+    return NextResponse.json({
+      sent: true,
+      inboundCount,
+      outboundCount,
+      date,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[otis] daily-report crashed:", message);
@@ -95,4 +101,5 @@ export async function GET(req: Request) {
   }
 }
 
+// Allow POST too (some schedulers default to POST).
 export const POST = GET;
