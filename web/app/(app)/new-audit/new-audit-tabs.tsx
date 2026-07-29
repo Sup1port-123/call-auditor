@@ -3,8 +3,9 @@
 import { useState } from "react";
 import SubmitForm from "./submit-form";
 import BatchForm from "./batch-form";
+import UploadForm from "./upload-form";
 
-type Mode = "single" | "batch";
+type Mode = "single" | "batch" | "upload";
 
 export default function NewAuditTabs({
   agents,
@@ -28,12 +29,19 @@ export default function NewAuditTabs({
           onClick={() => setMode("batch")}
           label="Upload spreadsheet"
         />
+        <TabButton
+          active={mode === "upload"}
+          onClick={() => setMode("upload")}
+          label="Upload file"
+        />
       </div>
 
       {mode === "single" ? (
         <SubmitForm agents={agents} defaultAgentId={defaultAgentId} />
-      ) : (
+      ) : mode === "batch" ? (
         <BatchForm agents={agents} defaultAgentId={defaultAgentId} />
+      ) : (
+        <UploadForm />
       )}
     </div>
   );
