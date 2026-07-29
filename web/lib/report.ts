@@ -33,7 +33,7 @@ export function istDayRangeUtc(istDate: string): { gte: string; lte: string } {
 
 export function parseHHMM(v: string | null | undefined): number | null {
   if (!v) return null;
-  const m = /^(\d{1,2}):(\d{2})$/.exec(v.trim());
+  const m = /^(d{1,2}):(d{2})$/.exec(v.trim());
   if (!m) return null;
   const h = Number(m[1]);
   const min = Number(m[2]);
@@ -114,7 +114,7 @@ type StatRow = {
   summary: string | null;
   what_was_lacking: string | null;
   mobile_number: string | null;
-  agents: { name: string } | null;
+  agents: { name: string } | { name: string }[] | null;
 };
 
 function scoreColor(pct: number | null): string {
@@ -167,12 +167,15 @@ export async function generateAndSendReport(opts: {
   if (statError) throw new Error(statError.message);
 
   const rows = exportData ?? [];
-  const allRows = (statData ?? []) as StatRow[];
+  const allRows = (statData ?? []) as unknown as StatRow[];
 
   type AgentStat = { total: number; scores: number[]; good: number; poor: number };
   const agentMap = new Map<string, AgentStat>();
   for (const r of allRows) {
-    const name = (r.agents as any)?.name ?? "Unknown";
+    const agentsVal = r.agents;
+    const name = Array.isArray(agentsVal)
+      ? (agentsVal[0]?.name ?? "Unknown")
+      : (agentsVal as { name: string } | null)?.name ?? "Unknown";
     if (!agentMap.has(name)) agentMap.set(name, { total: 0, scores: [], good: 0, poor: 0 });
     const ag = agentMap.get(name)!;
     ag.total++;
@@ -210,13 +213,19 @@ export async function generateAndSendReport(opts: {
   const coaching = allRows
     .filter((r) => r.overall_score != null && r.summary)
     .slice(0, 10)
-    .map((r) => ({
-      mobile: r.mobile_number ?? "—",
-      agentName: (r.agents as any)?.name ?? "Unknown",
-      pct: toQualityPct(r.overall_score!)!,
-      summary: r.summary!,
-      lacking: r.what_was_lacking,
-    }));
+    .map((r) => {
+      const agentsVal = r.agents;
+      const agentName = Array.isArray(agentsVal)
+        ? (agentsVal[0]?.name ?? "Unknown")
+        : (agentsVal as { name: string } | null)?.name ?? "Unknown";
+      return {
+        mobile: r.mobile_number ?? "—",
+        agentName,
+        pct: toQualityPct(r.overall_score!)!,
+        summary: r.summary!,
+        lacking: r.what_was_lacking,
+      };
+    });
 
   const displayDate = fmtDate(opts.istDate);
   const avgColor = scoreColor(avgPct);
@@ -225,15 +234,15 @@ export async function generateAndSendReport(opts: {
     .map(
       (a) =>
         `<tr>
-          <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;color:#111;font-weight:500">${a.name}</td>
-          <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;color:#555;font-size:13px">${a.total}<span style="color:#bbb;font-size:12px"> (${a.scored} scored)</span></td>
-          <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0">
-            <span style="display:inline-block;width:${a.avg != null ? Math.round(a.avg * 0.7) : 0}px;height:5px;background:${scoreColor(a.avg)};border-radius:3px;vertical-align:middle;margin-right:6px"></span>
-            <strong style="color:${scoreColor(a.avg)}">${a.avg != null ? a.avg + "%" : "—"}</strong>
-          </td>
-          <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;color:#16a34a;font-weight:500">${a.good}</td>
-          <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;color:#dc2626;font-weight:500">${a.poor}</td>
-        </tr>`,
+<td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;color:#111;font-weight:500">${a.name}</td>
+<td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;color:#555;font-size:13px">${a.total}<span style="color:#bbb;font-size:12px"> (${a.scored} scored)</span></td>
+<td style="padding:10px 12px;border-bottom:1px solid #f0f0f0">
+<span style="display:inline-block;width:${a.avg != null ? Math.round(a.avg * 0.7) : 0}px;height:5px;background:${scoreColor(a.avg)};border-radius:3px;vertical-align:middle;margin-right:6px"></span>
+<strong style="color:${scoreColor(a.avg)}">${a.avg != null ? a.avg + "%" : "—"}</strong>
+</td>
+<td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;color:#16a34a;font-weight:500">${a.good}</td>
+<td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;color:#dc2626;font-weight:500">${a.poor}</td>
+</tr>`,
     )
     .join("");
 
@@ -243,13 +252,13 @@ export async function generateAndSendReport(opts: {
           .map(
             (c) =>
               `<div style="border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px;margin-bottom:10px">
-                <table width="100%" cellpadding="0" cellspacing="0"><tr>
-                  <td style="font-size:13px;font-weight:600;color:#111">${c.mobile}&nbsp;<span style="color:#888;font-weight:400">${c.agentName}</span></td>
-                  <td align="right" style="font-size:14px;font-weight:700;color:${scoreColor(c.pct)}">${c.pct}%</td>
-                </tr></table>
-                <p style="margin:6px 0 0;font-size:13px;color:#555;line-height:1.5">${c.summary}</p>
-                ${c.lacking ? `<p style="margin:6px 0 0;font-size:12px;color:#999"><b>What was lacking:</b> ${c.lacking}</p>` : ""}
-              </div>`,
+<table width="100%" cellpadding="0" cellspacing="0"><tr>
+<td style="font-size:13px;font-weight:600;color:#111">${c.mobile}&nbsp;<span style="color:#888;font-weight:400">${c.agentName}</span></td>
+<td align="right" style="font-size:14px;font-weight:700;color:${scoreColor(c.pct)}">${c.pct}%</td>
+</tr></table>
+<p style="margin:6px 0 0;font-size:13px;color:#555;line-height:1.5">${c.summary}</p>
+${c.lacking ? `<p style="margin:6px 0 0;font-size:12px;color:#999"><b>What was lacking:</b> ${c.lacking}</p>` : ""}
+</div>`,
           )
           .join("")
       : "";
@@ -259,40 +268,40 @@ export async function generateAndSendReport(opts: {
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;padding:20px;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif">
 <div style="max-width:620px;margin:0 auto;background:#ffffff;border-radius:10px;overflow:hidden;border:1px solid #e5e7eb">
-  <div style="background:#111111;padding:24px 28px">
-    <p style="margin:0 0 6px;font-size:11px;color:#aaaaaa;letter-spacing:0.08em;text-transform:uppercase">Otis · AI Call Auditor</p>
-    <h1 style="margin:0 0 6px;font-size:20px;color:#ffffff;font-weight:600">Daily call quality report</h1>
-    <p style="margin:0;font-size:14px;color:#aaaaaa">Report for <span style="color:#ffffff;font-weight:600">${displayDate}</span></p>
-  </div>
-  <div style="padding:24px 28px">
-    <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:28px"><tr>
-      <td style="width:33%;padding-right:6px"><div style="background:#f9fafb;border-radius:8px;padding:14px 12px">
-        <p style="margin:0 0 4px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em">Total calls</p>
-        <p style="margin:0;font-size:24px;font-weight:600;color:#111">${allRows.length}</p>
-      </div></td>
-      <td style="width:33%;padding:0 3px"><div style="background:#f9fafb;border-radius:8px;padding:14px 12px">
-        <p style="margin:0 0 4px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em">Scored</p>
-        <p style="margin:0;font-size:24px;font-weight:600;color:#111">${scoredRows.length}</p>
-      </div></td>
-      <td style="width:33%;padding-left:6px"><div style="background:#f9fafb;border-radius:8px;padding:14px 12px">
-        <p style="margin:0 0 4px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em">Avg quality</p>
-        <p style="margin:0;font-size:24px;font-weight:600;color:${avgColor}">${avgPct != null ? avgPct + "%" : "—"}</p>
-      </div></td>
-    </tr></table>
-    <p style="margin:0 0 10px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.07em;font-weight:600">Agent breakdown</p>
-    <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:28px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden">
-      <thead><tr style="background:#f9fafb">
-        <th style="padding:8px 12px;text-align:left;font-size:11px;color:#888;font-weight:500;border-bottom:1px solid #e5e7eb">Agent</th>
-        <th style="padding:8px 12px;text-align:left;font-size:11px;color:#888;font-weight:500;border-bottom:1px solid #e5e7eb">Calls</th>
-        <th style="padding:8px 12px;text-align:left;font-size:11px;color:#888;font-weight:500;border-bottom:1px solid #e5e7eb">Avg quality</th>
-        <th style="padding:8px 12px;text-align:left;font-size:11px;color:#888;font-weight:500;border-bottom:1px solid #e5e7eb">Good ≥80%</th>
-        <th style="padding:8px 12px;text-align:left;font-size:11px;color:#888;font-weight:500;border-bottom:1px solid #e5e7eb">Poor &lt;60%</th>
-      </tr></thead>
-      <tbody>${agentTableRows}</tbody>
-    </table>
-    ${coachingHtml ? `<p style="margin:0 0 10px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.07em;font-weight:600">Needs coaching — lowest scoring calls</p>${coachingHtml}` : ""}
-    <p style="margin:24px 0 0;font-size:12px;color:#aaa;border-top:1px solid #f0f0f0;padding-top:16px">Full audit data attached as Excel file. Sent automatically by Otis.</p>
-  </div>
+<div style="background:#111111;padding:24px 28px">
+<p style="margin:0 0 6px;font-size:11px;color:#aaaaaa;letter-spacing:0.08em;text-transform:uppercase">Otis · AI Call Auditor</p>
+<h1 style="margin:0 0 6px;font-size:20px;color:#ffffff;font-weight:600">Daily call quality report</h1>
+<p style="margin:0;font-size:14px;color:#aaaaaa">Report for <span style="color:#ffffff;font-weight:600">${displayDate}</span></p>
+</div>
+<div style="padding:24px 28px">
+<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:28px"><tr>
+<td style="width:33%;padding-right:6px"><div style="background:#f9fafb;border-radius:8px;padding:14px 12px">
+<p style="margin:0 0 4px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em">Total calls</p>
+<p style="margin:0;font-size:24px;font-weight:600;color:#111">${allRows.length}</p>
+</div></td>
+<td style="width:33%;padding:0 3px"><div style="background:#f9fafb;border-radius:8px;padding:14px 12px">
+<p style="margin:0 0 4px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em">Scored</p>
+<p style="margin:0;font-size:24px;font-weight:600;color:#111">${scoredRows.length}</p>
+</div></td>
+<td style="width:33%;padding-left:6px"><div style="background:#f9fafb;border-radius:8px;padding:14px 12px">
+<p style="margin:0 0 4px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em">Avg quality</p>
+<p style="margin:0;font-size:24px;font-weight:600;color:${avgColor}">${avgPct != null ? avgPct + "%" : "—"}</p>
+</div></td>
+</tr></table>
+<p style="margin:0 0 10px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.07em;font-weight:600">Agent breakdown</p>
+<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:28px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden">
+<thead><tr style="background:#f9fafb">
+<th style="padding:8px 12px;text-align:left;font-size:11px;color:#888;font-weight:500;border-bottom:1px solid #e5e7eb">Agent</th>
+<th style="padding:8px 12px;text-align:left;font-size:11px;color:#888;font-weight:500;border-bottom:1px solid #e5e7eb">Calls</th>
+<th style="padding:8px 12px;text-align:left;font-size:11px;color:#888;font-weight:500;border-bottom:1px solid #e5e7eb">Avg quality</th>
+<th style="padding:8px 12px;text-align:left;font-size:11px;color:#888;font-weight:500;border-bottom:1px solid #e5e7eb">Good &ge;80%</th>
+<th style="padding:8px 12px;text-align:left;font-size:11px;color:#888;font-weight:500;border-bottom:1px solid #e5e7eb">Poor &lt;60%</th>
+</tr></thead>
+<tbody>${agentTableRows}</tbody>
+</table>
+${coachingHtml ? `<p style="margin:0 0 10px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.07em;font-weight:600">Needs coaching — lowest scoring calls</p>${coachingHtml}` : ""}
+<p style="margin:24px 0 0;font-size:12px;color:#aaa;border-top:1px solid #f0f0f0;padding-top:16px">Full audit data attached as Excel file. Sent automatically by Otis.</p>
+</div>
 </div>
 </body></html>`;
 
@@ -306,4 +315,4 @@ export async function generateAndSendReport(opts: {
   });
 
   return { count: rows.length };
-      }
+}
