@@ -92,7 +92,7 @@ export type ComplianceCheckDef = {
 };
 
 /**
- * Mandatory script compliance checks for every inbound call.
+ * Mandatory script compliance checks for every call.
  * Each returns pass/fail + an evidence quote from the transcript.
  */
 export const SCRIPT_COMPLIANCE_CHECKS: ComplianceCheckDef[] = [
@@ -145,6 +145,63 @@ export const SCRIPT_COMPLIANCE_CHECKS: ComplianceCheckDef[] = [
       "Mark FAIL if no feedback was solicited.",
   },
 ];
+
+// ---------- Inbound-specific Compliance Checks --------------------------------
+// Additional binary checks applied ONLY to Inbound Support calls.
+// Covers: query reason identification, callback protocol, script adherence.
+
+export const INBOUND_COMPLIANCE_CHECKS: ComplianceCheckDef[] = [
+  {
+    key: "identified_query_type",
+    name: "Identified Customer Query Type",
+    instruction:
+      "Did the agent correctly identify and acknowledge the specific reason the GP (customer) was calling? " +
+      "Examples: loan status enquiry, app login issue, payout delay, product information, callback request, complaint. " +
+      "The agent should have explicitly confirmed the query type before proceeding to resolution. " +
+      "Mark FAIL if the agent never established or confirmed the reason for the call.",
+  },
+  {
+    key: "asked_gp_reason_before_callback",
+    name: "Asked GP Reason Before Arranging Callback",
+    instruction:
+      "If the call involved arranging a callback, scheduling a follow-up, or transferring/escalating to another team: " +
+      "did the agent FIRST ask the GP's specific reason or concern before arranging it? " +
+      "(e.g. 'Aapko kaunsi problem aa rahi hai?' before saying 'Main callback schedule karta hoon'.) " +
+      "Mark FAIL if a callback or escalation was arranged without the agent first understanding the GP's reason. " +
+      "Mark PASS with evidence 'not applicable — no callback arranged' if no callback occurred on this call.",
+  },
+  {
+    key: "followed_inbound_script",
+    name: "Followed Complete Inbound Call Script",
+    instruction:
+      "Did the agent follow the complete inbound call script as specified in the knowledge base? " +
+      "Mandatory script steps: (1) greeting with agent's own name + Gromo company name, " +
+      "(2) proactively ask and identify the GP's query, " +
+      "(3) provide resolution or correctly escalate per KB protocol, " +
+      "(4) ask if further assistance is needed, " +
+      "(5) request call feedback, " +
+      "(6) professional closing. " +
+      "Mark FAIL if any of these mandatory steps from the KB was clearly skipped or done incorrectly.",
+  },
+];
+
+/** Returns true if the agent name indicates an inbound support agent. */
+export function isInboundAgent(agentName?: string | null): boolean {
+  if (!agentName) return false;
+  return agentName.toLowerCase().includes("inbound");
+}
+
+/**
+ * Returns the appropriate compliance checks for the given agent.
+ * Inbound agents get the base 6 checks + 3 inbound-specific checks (9 total).
+ * Outbound agents get just the base 6.
+ */
+export function getComplianceChecks(agentName?: string | null): ComplianceCheckDef[] {
+  if (isInboundAgent(agentName)) {
+    return [...SCRIPT_COMPLIANCE_CHECKS, ...INBOUND_COMPLIANCE_CHECKS];
+  }
+  return SCRIPT_COMPLIANCE_CHECKS;
+}
 
 // ---- Per-agent rubric parsing / validation --------------------------------
 
@@ -315,13 +372,8 @@ Respond with VALID JSON ONLY matching this exact shape:
   "what_was_lacking": "<string>",
   "improvement_recommendations": [ "<string>", ... ],
   "script_compliance": {
-    "self_introduction": { "passed": <true|false>, "evidence": "<quote from transcript>" },
-    "gromo_mention": { "passed": <true|false>, "evidence": "<quote from transcript>" },
-    "issue_confirmation": { "passed": <true|false>, "evidence": "<quote from transcript>" },
-    "resolution_provided": { "passed": <true|false>, "evidence": "<quote from transcript>" },
-    "closing_assistance": { "passed": <true|false>, "evidence": "<quote from transcript>" },
-    "feedback_capture": { "passed": <true|false>, "evidence": "<quote from transcript>" }
-  }
+{compliance_json_shape}
+  }{call_reason_field}
 }`;
 
 function formatRubric(
@@ -336,10 +388,16 @@ function formatRubric(
     .join("\n");
 }
 
-function formatComplianceBlock(): string {
-  return SCRIPT_COMPLIANCE_CHECKS
+function formatComplianceBlock(checks: ComplianceCheckDef[]): string {
+  return checks
     .map((c, i) => `${i + 1}. ${c.key} — "${c.name}": ${c.instruction}`)
     .join("\n");
+}
+
+function buildComplianceJsonShape(checks: ComplianceCheckDef[]): string {
+  return checks
+    .map((c) => `    "${c.key}": { "passed": <true|false>, "evidence": "<quote from transcript>" }`)
+    .join(",\n");
 }
 
 export function buildSystemPrompt(opts: {
@@ -362,10 +420,23 @@ export function buildSystemPrompt(opts: {
     STRICTNESS_LEVELS[opts.strictness ?? "standard"] ??
     STRICTNESS_LEVELS.standard;
 
-  let prompt = SYSTEM_PROMPT_TEMPLATE.replace("{focus_block}", focus_block)
+  // Get the right compliance checks for this agent type
+  const checks = getComplianceChecks(opts.agentName);
+  const inbound = isInboundAgent(opts.agentName);
+
+  // Build dynamic compliance JSON shape and optional call_reason field
+  const complianceJsonShape = buildComplianceJsonShape(checks);
+  const callReasonField = inbound
+    ? `,\n  "call_reason": "<brief category of what the GP was calling about — e.g. 'loan status query', 'app login issue', 'payout delay', 'callback request', 'product information', 'complaint'>"`
+    : "";
+
+  let prompt = SYSTEM_PROMPT_TEMPLATE
+    .replace("{focus_block}", focus_block)
     .replace("{strictness_block}", strictness_block)
     .replace("{rubric}", formatRubric(rubric, p.emphasis_keys))
-    .replace("{compliance_block}", formatComplianceBlock());
+    .replace("{compliance_block}", formatComplianceBlock(checks))
+    .replace("{compliance_json_shape}", complianceJsonShape)
+    .replace("{call_reason_field}", callReasonField);
 
   if (opts.knowledgeBase?.trim()) {
     const kb = opts.knowledgeBase.trim().slice(0, 60000);
@@ -382,4 +453,4 @@ export function buildSystemPrompt(opts: {
   }
 
   return prompt;
-}
+    }
