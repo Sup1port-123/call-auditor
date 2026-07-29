@@ -1,333 +1,309 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { buildAuditsXlsx, AUDIT_EXPORT_COLUMNS } from "@/lib/audit-export";
-import { SCRIPT_COMPLIANCE_CHECKS } from "@/lib/rubric";
-import type { AuditExportRow } from "@/lib/audit-export";
 
 export type ReportSettings = {
-id: string;
-emails: string | null;
-send_time: string | null;
-timezone: string;
-enabled: boolean;
-last_sent_date: string | null;
-updated_at: string | null;
+  id: string;
+  emails: string | null;
+  send_time: string | null;
+  timezone: string;
+  enabled: boolean;
+  last_sent_date: string | null;
+  updated_at: string | null;
 };
 
-// India Standard Time is a fixed UTC+5:30 (no DST), so we can shift the clock
-// directly rather than pulling in a tz library.
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
 export function istParts(nowMs = Date.now()): {
-date: string; // YYYY-MM-DD in IST
-minutes: number; // minutes since IST midnight
+  date: string;
+  minutes: number;
 } {
-const d = new Date(nowMs + IST_OFFSET_MS);
-return {
-date: d.toISOString().slice(0, 10),
-minutes: d.getUTCHours() * 60 + d.getUTCMinutes(),
-};
+  const d = new Date(nowMs + IST_OFFSET_MS);
+  return {
+    date: d.toISOString().slice(0, 10),
+    minutes: d.getUTCHours() * 60 + d.getUTCMinutes(),
+  };
 }
 
-// UTC bounds for a given IST calendar day.
 export function istDayRangeUtc(istDate: string): { gte: string; lte: string } {
-return {
-gte: new Date(`${istDate}T00:00:00+05:30`).toISOString(),
-lte: new Date(`${istDate}T23:59:59.999+05:30`).toISOString(),
-};
+  return {
+    gte: new Date(`${istDate}T00:00:00+05:30`).toISOString(),
+    lte: new Date(`${istDate}T23:59:59.999+05:30`).toISOString(),
+  };
 }
 
-// "HH:MM" → minutes since midnight, or null if malformed.
 export function parseHHMM(v: string | null | undefined): number | null {
-if (!v) return null;
-const m = /^(\d{1,2}):(\d{2})$/.exec(v.trim());
-if (!m) return null;
-const h = Number(m[1]);
-const min = Number(m[2]);
-if (h < 0 || h > 23 || min < 0 || min > 59) return null;
-return h * 60 + min;
+  if (!v) return null;
+  const m = /^(\d{1,2}):(\d{2})$/.exec(v.trim());
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h < 0 || h > 23 || min < 0 || min > 59) return null;
+  return h * 60 + min;
 }
 
 export function parseEmails(raw: string | null | undefined): string[] {
-if (!raw) return [];
-return raw
-.split(/[,\n;]/)
-.map((s) => s.trim())
-.filter((s) => /.+@.+\..+/.test(s));
-}
-
-// Per-agent coaching row used in the daily email.
-type AgentCoachRow = {
-name: string;
-callCount: number;
-avgScore: number;
-topGaps: string[];
-};
-
-async function buildCoachingSection(
-supabase: ReturnType<typeof createAdminClient>,
-istDate: string,
-): Promise<string> {
-// Look back 7 days from the report date for coaching data.
-const endDate = new Date(`${istDate}T23:59:59.999+05:30`);
-const startDate = new Date(endDate.getTime() - 7 * 24 * 60 * 60 * 1000);
-
-// Fetch audits and agents separately to avoid join syntax issues with TS types.
-const [{ data: audits }, { data: agentsList }] = await Promise.all([
-supabase
-.from("audits")
-.select("agent_id, overall_score, what_was_lacking, recommendations_json")
-.gte("timestamp", startDate.toISOString())
-.lte("timestamp", endDate.toISOString())
-.not("agent_id", "is", null)
-.not("overall_score", "is", null),
-supabase.from("agents").select("id, name"),
-]);
-
-if (!audits || audits.length === 0) return "";
-
-const agentNameMap = new Map((agentsList ?? []).map((a) => [a.id, a.name]));
-
-// Group by agent.
-const agentMap = new Map<
-string,
-{ scores: number[]; gaps: string[] }
->();
-for (const row of audits) {
-const id = row.agent_id;
-if (!id) continue;
-if (!agentMap.has(id)) agentMap.set(id, { scores: [], gaps: [] });
-const entry = agentMap.get(id)!;
-if (row.overall_score != null) entry.scores.push(row.overall_score);
-// Collect gap text from what_was_lacking and recommendations_json.
-if (row.what_was_lacking) entry.gaps.push(String(row.what_was_lacking));
-if (Array.isArray(row.recommendations_json)) {
-for (const rec of row.recommendations_json as string[]) {
-if (rec) entry.gaps.push(rec);
-}
-}
-}
-
-const rows: AgentCoachRow[] = Array.from(agentMap.entries())
-.map(([id, { scores, gaps }]) => ({
-name: agentNameMap.get(id) ?? "Unknown",
-callCount: scores.length,
-avgScore:
-scores.length > 0
-? scores.reduce((a, b) => a + b, 0) / scores.length
-: 0,
-// Deduplicate gaps and take the top 3.
-topGaps: [...new Set(gaps)].slice(0, 3),
-}))
-.sort((a, b) => a.avgScore - b.avgScore); // lowest first
-
-if (rows.length === 0) return "";
-
-const rowsHtml = rows
-.map((r) => {
-// Convert 1-5 score to percentage
-const avgPct = Math.round((r.avgScore / 5) * 100);
-const scoreColor =
-avgPct >= 80
-? "#16a34a"
-: avgPct >= 60
-? "#ca8a04"
-: "#dc2626";
-const gapsHtml =
-r.topGaps.length > 0
-? `<ul style="margin:4px 0 0 0;padding-left:18px;color:#555;">${r.topGaps
-.map((g) => `<li>${g}</li>`)
-.join("")}</ul>`
-: "<p style='color:#888;margin:4px 0 0 0;'>No specific gaps recorded.</p>";
-return `
-<tr style="border-bottom:1px solid #e5e7eb;">
-<td style="padding:10px 12px;font-weight:600;">${r.name}</td>
-<td style="padding:10px 12px;text-align:center;">${r.callCount}</td>
-<td style="padding:10px 12px;text-align:center;font-weight:700;color:${scoreColor};">${avgPct}%</td>
-<td style="padding:10px 12px;">${gapsHtml}</td>
-</tr>`;
-})
-.join("");
-
-return `
-<h2 style="color:#111;font-size:16px;margin:32px 0 8px 0;">📋 Agent Coaching Notes (Last 7 Days)</h2>
-<table style="width:100%;border-collapse:collapse;font-size:14px;background:#fff;border:1px solid #e5e7eb;">
-<thead>
-<tr style="background:#f3f4f6;text-align:left;">
-<th style="padding:10px 12px;">Agent</th>
-<th style="padding:10px 12px;text-align:center;">Calls</th>
-<th style="padding:10px 12px;text-align:center;">Quality %</th>
-<th style="padding:10px 12px;">Top Gaps</th>
-</tr>
-</thead>
-<tbody>${rowsHtml}</tbody>
-</table>`;
-}
-
-// Build a Script Compliance summary section for the daily email.
-// Shows pass/fail rate for each of the 6 mandatory checks across all audits.
-function buildComplianceSection(
-rows: { compliance_json: string | null }[],
-): string {
-// Only include rows that have compliance data.
-const withData = rows.filter((r) => r.compliance_json && r.compliance_json !== "{}");
-if (withData.length === 0) return "";
-
-// Tally pass counts per check key.
-const passCounts: Record<string, number> = {};
-const total = withData.length;
-for (const check of SCRIPT_COMPLIANCE_CHECKS) {
-passCounts[check.key] = 0;
-}
-for (const row of withData) {
-try {
-const parsed = JSON.parse(row.compliance_json ?? "{}") as Record<string, { passed?: boolean }>;
-for (const check of SCRIPT_COMPLIANCE_CHECKS) {
-if (parsed[check.key]?.passed === true) {
-passCounts[check.key]++;
-}
-}
-} catch {
-// skip malformed rows
-}
-}
-
-const checkRows = SCRIPT_COMPLIANCE_CHECKS.map((check) => {
-const passed = passCounts[check.key] ?? 0;
-const pct = total > 0 ? Math.round((passed / total) * 100) : 0;
-const barColor = pct >= 80 ? "#16a34a" : pct >= 50 ? "#ca8a04" : "#dc2626";
-const emoji = pct >= 80 ? "✅" : pct >= 50 ? "⚠️" : "❌";
-return `
-<tr style="border-bottom:1px solid #e5e7eb;">
-<td style="padding:9px 12px;">${emoji} ${check.name}</td>
-<td style="padding:9px 12px;text-align:center;">${passed}/${total}</td>
-<td style="padding:9px 12px;">
-<div style="background:#e5e7eb;border-radius:4px;height:10px;width:100%;max-width:160px;">
-<div style="background:${barColor};border-radius:4px;height:10px;width:${pct}%;"></div>
-</div>
-</td>
-<td style="padding:9px 12px;text-align:center;font-weight:700;color:${barColor};">${pct}%</td>
-</tr>`;
-}).join("");
-
-return `
-<h2 style="color:#111;font-size:16px;margin:32px 0 8px 0;">✅ Script Compliance — Today's Calls</h2>
-<p style="color:#555;font-size:13px;margin:0 0 10px 0;">Pass rate across ${total} audited call${total === 1 ? "" : "s"} (mandatory script checks)</p>
-<table style="width:100%;border-collapse:collapse;font-size:14px;background:#fff;border:1px solid #e5e7eb;">
-<thead>
-<tr style="background:#f3f4f6;text-align:left;">
-<th style="padding:9px 12px;">Check</th>
-<th style="padding:9px 12px;text-align:center;">Passed</th>
-<th style="padding:9px 12px;">Pass Rate</th>
-<th style="padding:9px 12px;text-align:center;">%</th>
-</tr>
-</thead>
-<tbody>${checkRows}</tbody>
-</table>`;
+  if (!raw) return [];
+  return raw
+    .split(/[,\n;]/)
+    .map((s) => s.trim())
+    .filter((s) => /.+@.+\..+/.test(s));
 }
 
 async function sendReportEmail(opts: {
-to: string[];
-subject: string;
-html: string;
-filename: string;
-xlsx: Uint8Array;
+  to: string[];
+  subject: string;
+  html: string;
+  filename: string;
+  xlsx: Uint8Array;
 }): Promise<void> {
-const smtpUser = process.env.SMTP_USER;
-const smtpPass = process.env.SMTP_PASS;
-const from = process.env.REPORT_FROM_EMAIL || smtpUser;
+  const smtpUser = process.env.SMTP_USER;
+  const smtpPass = process.env.SMTP_PASS;
+  const from = process.env.REPORT_FROM_EMAIL || smtpUser;
 
-if (smtpUser && smtpPass) {
-const { createTransport } = await import("nodemailer");
-const smtpHost = process.env.SMTP_HOST;
-const transport = createTransport(
-smtpHost
-? { host: smtpHost, port: 587, secure: false, auth: { user: smtpUser, pass: smtpPass } }
-: { service: "gmail", auth: { user: smtpUser, pass: smtpPass } },
-);
-await transport.sendMail({
-from: from || smtpUser,
-to: opts.to.join(", "),
-subject: opts.subject,
-html: opts.html,
-attachments: [
-{ filename: opts.filename, content: Buffer.from(opts.xlsx) },
-],
-});
-return;
+  if (smtpUser && smtpPass) {
+    const { createTransport } = await import("nodemailer");
+    const transport = createTransport({
+      service: "gmail",
+      auth: { user: smtpUser, pass: smtpPass },
+    });
+    await transport.sendMail({
+      from: from || smtpUser,
+      to: opts.to.join(", "),
+      subject: opts.subject,
+      html: opts.html,
+      attachments: [
+        { filename: opts.filename, content: Buffer.from(opts.xlsx) },
+      ],
+    });
+    return;
+  }
+
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "No email transport configured. Set SMTP_USER + SMTP_PASS (Gmail app " +
+        "password) or RESEND_API_KEY.",
+    );
+  }
+  if (!from) throw new Error("REPORT_FROM_EMAIL is not set");
+
+  const base64 = Buffer.from(opts.xlsx).toString("base64");
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from,
+      to: opts.to,
+      subject: opts.subject,
+      html: opts.html,
+      attachments: [{ filename: opts.filename, content: base64 }],
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Resend ${res.status}: ${body.slice(0, 300)}`);
+  }
 }
 
-const apiKey = process.env.RESEND_API_KEY;
-if (!apiKey) {
-throw new Error(
-"No email transport configured. Set SMTP_USER + SMTP_PASS (Gmail app " +
-"password) or RESEND_API_KEY.",
-);
-}
-if (!from) throw new Error("REPORT_FROM_EMAIL is not set");
+type StatRow = {
+  overall_score: number | null;
+  summary: string | null;
+  what_was_lacking: string | null;
+  mobile_number: string | null;
+  agents: { name: string } | null;
+};
 
-const base64 = Buffer.from(opts.xlsx).toString("base64");
-const res = await fetch("https://api.resend.com/emails", {
-method: "POST",
-headers: {
-Authorization: `Bearer ${apiKey}`,
-"Content-Type": "application/json",
-},
-body: JSON.stringify({
-from,
-to: opts.to,
-subject: opts.subject,
-html: opts.html,
-attachments: [{ filename: opts.filename, content: base64 }],
-}),
-});
-
-if (!res.ok) {
-const body = await res.text();
-throw new Error(`Resend ${res.status}: ${body.slice(0, 300)}`);
-}
+function scoreColor(pct: number | null): string {
+  if (pct == null) return "#888888";
+  return pct >= 80 ? "#16a34a" : pct >= 60 ? "#ca8a04" : "#dc2626";
 }
 
-// Build that IST day's audit report and email it to the recipients.
-// Also includes a 7-day agent coaching section and script compliance summary.
+function toQualityPct(score: number | null): number | null {
+  if (score == null) return null;
+  return Math.round((score / 5) * 100);
+}
+
+function fmtDate(istDate: string): string {
+  return new Date(`${istDate}T12:00:00+05:30`).toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "Asia/Kolkata",
+  });
+}
+
 export async function generateAndSendReport(opts: {
-emails: string[];
-istDate: string;
+  emails: string[];
+  istDate: string;
 }): Promise<{ count: number }> {
-const supabase = createAdminClient();
-const { gte, lte } = istDayRangeUtc(opts.istDate);
+  const supabase = createAdminClient();
+  const { gte, lte } = istDayRangeUtc(opts.istDate);
 
-const [{ data, error }, coachingHtml] = await Promise.all([
-supabase
-.from("audits")
-.select(AUDIT_EXPORT_COLUMNS)
-.gte("timestamp", gte)
-.lte("timestamp", lte)
-.order("timestamp", { ascending: false })
-.limit(10000),
-buildCoachingSection(supabase, opts.istDate),
-]);
+  const [
+    { data: exportData, error: exportError },
+    { data: statData, error: statError },
+  ] = await Promise.all([
+    supabase
+      .from("audits")
+      .select(AUDIT_EXPORT_COLUMNS)
+      .gte("timestamp", gte)
+      .lte("timestamp", lte)
+      .order("timestamp", { ascending: false })
+      .limit(10000),
+    supabase
+      .from("audits")
+      .select("overall_score, summary, what_was_lacking, mobile_number, agents(name)")
+      .gte("timestamp", gte)
+      .lte("timestamp", lte)
+      .order("overall_score", { ascending: true })
+      .limit(10000),
+  ]);
 
-if (error) throw new Error(error.message);
-const rows = data ?? [];
+  if (exportError) throw new Error(exportError.message);
+  if (statError) throw new Error(statError.message);
 
-// Build compliance section from today's rows
-const complianceHtml = buildComplianceSection(
-rows.map((r) => ({ compliance_json: (r as { compliance_json?: string | null }).compliance_json ?? null })),
-);
+  const rows = exportData ?? [];
+  const allRows = (statData ?? []) as StatRow[];
 
-const xlsx = await buildAuditsXlsx(rows as AuditExportRow[]);
-await sendReportEmail({
-to: opts.emails,
-subject: `Otis audit report — ${opts.istDate}`,
-html:
-`<p>Attached is the audit report for <strong>${opts.istDate}</strong> (IST): ` +
-`${rows.length} audit${rows.length === 1 ? "" : "s"}.</p>` +
-complianceHtml +
-coachingHtml +
-`<p style="color:#888;font-size:12px;margin-top:24px;">Sent automatically by Otis.</p>`,
-filename: `otis-audits-${opts.istDate}.xlsx`,
-xlsx,
-});
+  type AgentStat = { total: number; scores: number[]; good: number; poor: number };
+  const agentMap = new Map<string, AgentStat>();
+  for (const r of allRows) {
+    const name = (r.agents as any)?.name ?? "Unknown";
+    if (!agentMap.has(name)) agentMap.set(name, { total: 0, scores: [], good: 0, poor: 0 });
+    const ag = agentMap.get(name)!;
+    ag.total++;
+    const pct = toQualityPct(r.overall_score);
+    if (pct != null) {
+      ag.scores.push(pct);
+      if (pct >= 80) ag.good++;
+      else if (pct < 60) ag.poor++;
+    }
+  }
 
-return { count: rows.length };
-}
+  const agents = [...agentMap.entries()]
+    .map(([name, ag]) => ({
+      name,
+      total: ag.total,
+      scored: ag.scores.length,
+      avg:
+        ag.scores.length > 0
+          ? Math.round(ag.scores.reduce((a, b) => a + b, 0) / ag.scores.length)
+          : null,
+      good: ag.good,
+      poor: ag.poor,
+    }))
+    .sort((a, b) => (b.avg ?? -1) - (a.avg ?? -1));
+
+  const scoredRows = allRows.filter((r) => r.overall_score != null);
+  const avgPct =
+    scoredRows.length > 0
+      ? Math.round(
+          scoredRows.reduce((s, r) => s + toQualityPct(r.overall_score!)!, 0) /
+            scoredRows.length,
+        )
+      : null;
+
+  const coaching = allRows
+    .filter((r) => r.overall_score != null && r.summary)
+    .slice(0, 10)
+    .map((r) => ({
+      mobile: r.mobile_number ?? "—",
+      agentName: (r.agents as any)?.name ?? "Unknown",
+      pct: toQualityPct(r.overall_score!)!,
+      summary: r.summary!,
+      lacking: r.what_was_lacking,
+    }));
+
+  const displayDate = fmtDate(opts.istDate);
+  const avgColor = scoreColor(avgPct);
+
+  const agentTableRows = agents
+    .map(
+      (a) =>
+        `<tr>
+          <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;color:#111;font-weight:500">${a.name}</td>
+          <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;color:#555;font-size:13px">${a.total}<span style="color:#bbb;font-size:12px"> (${a.scored} scored)</span></td>
+          <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0">
+            <span style="display:inline-block;width:${a.avg != null ? Math.round(a.avg * 0.7) : 0}px;height:5px;background:${scoreColor(a.avg)};border-radius:3px;vertical-align:middle;margin-right:6px"></span>
+            <strong style="color:${scoreColor(a.avg)}">${a.avg != null ? a.avg + "%" : "—"}</strong>
+          </td>
+          <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;color:#16a34a;font-weight:500">${a.good}</td>
+          <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;color:#dc2626;font-weight:500">${a.poor}</td>
+        </tr>`,
+    )
+    .join("");
+
+  const coachingHtml =
+    coaching.length > 0
+      ? coaching
+          .map(
+            (c) =>
+              `<div style="border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px;margin-bottom:10px">
+                <table width="100%" cellpadding="0" cellspacing="0"><tr>
+                  <td style="font-size:13px;font-weight:600;color:#111">${c.mobile}&nbsp;<span style="color:#888;font-weight:400">${c.agentName}</span></td>
+                  <td align="right" style="font-size:14px;font-weight:700;color:${scoreColor(c.pct)}">${c.pct}%</td>
+                </tr></table>
+                <p style="margin:6px 0 0;font-size:13px;color:#555;line-height:1.5">${c.summary}</p>
+                ${c.lacking ? `<p style="margin:6px 0 0;font-size:12px;color:#999"><b>What was lacking:</b> ${c.lacking}</p>` : ""}
+              </div>`,
+          )
+          .join("")
+      : "";
+
+  const html = `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:20px;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif">
+<div style="max-width:620px;margin:0 auto;background:#ffffff;border-radius:10px;overflow:hidden;border:1px solid #e5e7eb">
+  <div style="background:#111111;padding:24px 28px">
+    <p style="margin:0 0 6px;font-size:11px;color:#aaaaaa;letter-spacing:0.08em;text-transform:uppercase">Otis · AI Call Auditor</p>
+    <h1 style="margin:0 0 6px;font-size:20px;color:#ffffff;font-weight:600">Daily call quality report</h1>
+    <p style="margin:0;font-size:14px;color:#aaaaaa">Report for <span style="color:#ffffff;font-weight:600">${displayDate}</span></p>
+  </div>
+  <div style="padding:24px 28px">
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:28px"><tr>
+      <td style="width:33%;padding-right:6px"><div style="background:#f9fafb;border-radius:8px;padding:14px 12px">
+        <p style="margin:0 0 4px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em">Total calls</p>
+        <p style="margin:0;font-size:24px;font-weight:600;color:#111">${allRows.length}</p>
+      </div></td>
+      <td style="width:33%;padding:0 3px"><div style="background:#f9fafb;border-radius:8px;padding:14px 12px">
+        <p style="margin:0 0 4px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em">Scored</p>
+        <p style="margin:0;font-size:24px;font-weight:600;color:#111">${scoredRows.length}</p>
+      </div></td>
+      <td style="width:33%;padding-left:6px"><div style="background:#f9fafb;border-radius:8px;padding:14px 12px">
+        <p style="margin:0 0 4px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em">Avg quality</p>
+        <p style="margin:0;font-size:24px;font-weight:600;color:${avgColor}">${avgPct != null ? avgPct + "%" : "—"}</p>
+      </div></td>
+    </tr></table>
+    <p style="margin:0 0 10px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.07em;font-weight:600">Agent breakdown</p>
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:28px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden">
+      <thead><tr style="background:#f9fafb">
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:#888;font-weight:500;border-bottom:1px solid #e5e7eb">Agent</th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:#888;font-weight:500;border-bottom:1px solid #e5e7eb">Calls</th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:#888;font-weight:500;border-bottom:1px solid #e5e7eb">Avg quality</th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:#888;font-weight:500;border-bottom:1px solid #e5e7eb">Good ≥80%</th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:#888;font-weight:500;border-bottom:1px solid #e5e7eb">Poor &lt;60%</th>
+      </tr></thead>
+      <tbody>${agentTableRows}</tbody>
+    </table>
+    ${coachingHtml ? `<p style="margin:0 0 10px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.07em;font-weight:600">Needs coaching — lowest scoring calls</p>${coachingHtml}` : ""}
+    <p style="margin:24px 0 0;font-size:12px;color:#aaa;border-top:1px solid #f0f0f0;padding-top:16px">Full audit data attached as Excel file. Sent automatically by Otis.</p>
+  </div>
+</div>
+</body></html>`;
+
+  const xlsx = await buildAuditsXlsx(rows);
+  await sendReportEmail({
+    to: opts.emails,
+    subject: `Otis daily report — ${displayDate}`,
+    html,
+    filename: `otis-audits-${opts.istDate}.xlsx`,
+    xlsx,
+  });
+
+  return { count: rows.length };
+      }
