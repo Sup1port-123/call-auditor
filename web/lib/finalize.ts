@@ -200,9 +200,7 @@ export async function finalizeAudit(
       rubric,
     });
 
-    // Non-interaction call detection — exclude these calls from quality metrics entirely.
-    // A non-interaction call (customer put on hold, silent, disconnected before speaking)
-    // must NOT count against the agent's average quality score.
+    // Non-interaction call detection — exclude these calls from quality metrics.
     const summaryLower = (evaluation.summary ?? "").toLowerCase();
     const isNonInteraction = [
       "no customer interaction",
@@ -228,6 +226,13 @@ export async function finalizeAudit(
       return { status: "excluded" };
     }
 
+    // Store script compliance + inbound call_reason in compliance_json.
+    // call_reason is only present for inbound calls; stored under _call_reason key.
+    const complianceData = {
+      ...(evaluation.script_compliance ?? {}),
+      ...(evaluation.call_reason ? { _call_reason: evaluation.call_reason } : {}),
+    };
+
     await saveCompleted(supabase, auditId, {
       status: "completed",
       transcript: transcriptText,
@@ -241,7 +246,7 @@ export async function finalizeAudit(
       strengths: evaluation.strengths,
       what_was_lacking: evaluation.what_was_lacking,
       recommendations_json: JSON.stringify(evaluation.improvement_recommendations),
-      compliance_json: JSON.stringify(evaluation.script_compliance ?? {}),
+      compliance_json: JSON.stringify(complianceData),
     });
 
     if (evaluation.overall_score < 5) {
@@ -269,4 +274,4 @@ export async function finalizeAudit(
       .eq("id", auditId);
     return { status: "failed" };
   }
-}
+          }
