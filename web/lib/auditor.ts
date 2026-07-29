@@ -4,7 +4,8 @@ import { GoogleGenAI, Type } from "@google/genai";
 import {
   buildSystemPrompt,
   RUBRIC_DIMENSIONS,
-  SCRIPT_COMPLIANCE_CHECKS,
+  getComplianceChecks,
+  isInboundAgent,
   type RubricDimension,
 } from "./rubric";
 
@@ -16,11 +17,6 @@ export type DimScore = {
   max?: number;
 };
 
-export type ComplianceCheck = {
-  passed: boolean;
-  evidence: string;
-};
-
 export type EvaluationResult = {
   scores: Record<string, DimScore>;
   overall_score: number;
@@ -28,7 +24,9 @@ export type EvaluationResult = {
   strengths: string;
   what_was_lacking: string;
   improvement_recommendations: string[];
-  script_compliance?: Record<string, ComplianceCheck>;
+  script_compliance?: Record<string, { passed: boolean; evidence: string }>;
+  /** Populated only for inbound calls — brief category of what the GP called about. */
+  call_reason?: string;
 };
 
 export type AuditScored = EvaluationResult & {
@@ -295,7 +293,7 @@ export async function scoreTranscript(opts: {
       if (provider === "openai" && process.env.OPENAI_API_KEY)
         result = await scoreWithOpenAI(systemPrompt, opts.transcript);
       else if (provider === "gemini" && process.env.GOOGLE_API_KEY)
-        result = await scoreWithGemini(systemPrompt, opts.transcript, rubric);
+        result = await scoreWithGemini(systemPrompt, opts.transcript, rubric, opts.agentName);
       else if (provider === "anthropic" && process.env.ANTHROPIC_API_KEY)
         result = await scoreWithClaude(systemPrompt, opts.transcript);
       if (result) {
@@ -327,44 +325,85 @@ async function scoreWithOpenAI(systemPrompt: string, transcript: string): Promis
   return parseJsonResponse(text);
 }
 
-async function scoreWithGemini(systemPrompt: string, transcript: string, rubric: RubricDimension[]): Promise<EvaluationResult> {
+async function scoreWithGemini(
+  systemPrompt: string,
+  transcript: string,
+  rubric: RubricDimension[],
+  agentName?: string,
+): Promise<EvaluationResult> {
   const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY! });
   const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-  const scoreBlock = { type: Type.OBJECT, properties: { score: { type: Type.INTEGER, nullable: true }, rationale: { type: Type.STRING } }, required: ["score", "rationale"] };
-  const scoresSchema = { type: Type.OBJECT, properties: Object.fromEntries(rubric.map((d) => [d.key, scoreBlock])), required: rubric.map((d) => d.key) };
-  const complianceCheckBlock = {
+
+  const scoreBlock = {
     type: Type.OBJECT,
     properties: {
-      passed: { type: Type.BOOLEAN },
-      evidence: { type: Type.STRING },
+      score: { type: Type.INTEGER, nullable: true },
+      rationale: { type: Type.STRING },
     },
-    required: ["passed", "evidence"],
+    required: ["score", "rationale"],
   };
-  const complianceSchema = {
+
+  const scoresSchema = {
     type: Type.OBJECT,
-    properties: Object.fromEntries(SCRIPT_COMPLIANCE_CHECKS.map((c) => [c.key, complianceCheckBlock])),
-    required: SCRIPT_COMPLIANCE_CHECKS.map((c) => c.key),
+    properties: Object.fromEntries(rubric.map((d) => [d.key, scoreBlock])),
+    required: rubric.map((d) => d.key),
   };
+
+  // Build compliance schema from the agent-appropriate checks
+  const complianceChecks = getComplianceChecks(agentName);
+  const complianceBlock = {
+    type: Type.OBJECT,
+    properties: Object.fromEntries(
+      complianceChecks.map((c) => [
+        c.key,
+        {
+          type: Type.OBJECT,
+          properties: {
+            passed: { type: Type.BOOLEAN },
+            evidence: { type: Type.STRING },
+          },
+          required: ["passed", "evidence"],
+        },
+      ]),
+    ),
+    required: complianceChecks.map((c) => c.key),
+  };
+
+  // Build the response schema, adding call_reason for inbound agents
+  const baseProperties: Record<string, unknown> = {
+    scores: scoresSchema,
+    overall_score: { type: Type.INTEGER },
+    summary: { type: Type.STRING },
+    strengths: { type: Type.STRING },
+    what_was_lacking: { type: Type.STRING },
+    improvement_recommendations: { type: Type.ARRAY, items: { type: Type.STRING } },
+    script_compliance: complianceBlock,
+  };
+  const baseRequired = [
+    "scores", "overall_score", "summary", "strengths",
+    "what_was_lacking", "improvement_recommendations", "script_compliance",
+  ];
+
+  if (isInboundAgent(agentName)) {
+    baseProperties.call_reason = { type: Type.STRING };
+    baseRequired.push("call_reason");
+  }
+
   const response = await ai.models.generateContent({
     model,
     contents: [{ role: "user", parts: [{ text: `TRANSCRIPT:\n${transcript}` }] }],
     config: {
-      systemInstruction: systemPrompt, responseMimeType: "application/json", temperature: 0.2,
+      systemInstruction: systemPrompt,
+      responseMimeType: "application/json",
+      temperature: 0.2,
       responseSchema: {
         type: Type.OBJECT,
-        properties: {
-          scores: scoresSchema,
-          overall_score: { type: Type.INTEGER },
-          summary: { type: Type.STRING },
-          strengths: { type: Type.STRING },
-          what_was_lacking: { type: Type.STRING },
-          improvement_recommendations: { type: Type.ARRAY, items: { type: Type.STRING } },
-          script_compliance: complianceSchema,
-        },
-        required: ["scores", "overall_score", "summary", "strengths", "what_was_lacking", "improvement_recommendations", "script_compliance"],
+        properties: baseProperties as Record<string, import("@google/genai").Schema>,
+        required: baseRequired,
       },
     },
   });
+
   const text = response.text;
   if (!text) throw new Error("Gemini returned an empty response");
   return JSON.parse(text) as EvaluationResult;
