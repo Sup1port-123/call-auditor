@@ -509,9 +509,12 @@ async function buildInboundHtml(rows: ReportRow[], istDate: string): Promise<str
   const badGroups = buildAgentGroups(rows, s => s < 3, "asc");
   const goodGroups = buildAgentGroups(rows, s => s >= 4, "desc");
 
+  const agentNames = [...new Set(rows.map(r => extractAgentName(r)).filter(n => n !== "Unknown Agent"))];
   const header = emailHeader(
     `📞 Inbound Support Report — ${displayDate}`,
-    `Otis daily quality audit · ${rows.length} call${rows.length === 1 ? "" : "s"} processed`,
+    agentNames.length > 0
+      ? `${agentNames.join(" · ")} — ${rows.length} call${rows.length === 1 ? "" : "s"} audited`
+      : `Otis daily quality audit · ${rows.length} call${rows.length === 1 ? "" : "s"} processed`,
     "#6366f1",
   );
 
@@ -557,9 +560,12 @@ async function buildOutboundHtml(rows: ReportRow[], istDate: string): Promise<st
   const badGroups = buildAgentGroups(rows, s => s < 3, "asc");
   const goodGroups = buildAgentGroups(rows, s => s >= 4, "desc");
 
+  const agentNames = [...new Set(rows.map(r => extractAgentName(r)).filter(n => n !== "Unknown Agent"))];
   const header = emailHeader(
     `📤 Outbound Calls Report — ${displayDate}`,
-    `Otis daily quality audit · ${rows.length} call${rows.length === 1 ? "" : "s"} processed`,
+    agentNames.length > 0
+      ? `${agentNames.join(" · ")} — ${rows.length} call${rows.length === 1 ? "" : "s"} audited`
+      : `Otis daily quality audit · ${rows.length} call${rows.length === 1 ? "" : "s"} processed`,
     "#0f766e",
   );
 
@@ -640,7 +646,7 @@ export async function generateAndSendReport(opts: {
       const html = await buildInboundHtml(inboundRows, opts.istDate);
       await sendReportEmail({
         to: opts.emails,
-        subject: `Otis Inbound Report — ${formatDisplayDate(opts.istDate)}`,
+        subject: `Otis Inbound Report [${[...new Set(inboundRows.map(r => extractAgentName(r)).filter(n => n !== "Unknown Agent"))].join(", ")}] — ${formatDisplayDate(opts.istDate)}`,
         html,
         filename: `otis-inbound-${opts.istDate}.xlsx`,
         xlsx: allXlsx,
@@ -656,7 +662,7 @@ export async function generateAndSendReport(opts: {
       const html = await buildOutboundHtml(outboundRows, opts.istDate);
       await sendReportEmail({
         to: opts.emails,
-        subject: `Otis Outbound Report — ${formatDisplayDate(opts.istDate)}`,
+        subject: `Otis Outbound Report [${[...new Set(outboundRows.map(r => extractAgentName(r)).filter(n => n !== "Unknown Agent"))].join(", ")}] — ${formatDisplayDate(opts.istDate)}`,
         html,
         filename: `otis-outbound-${opts.istDate}.xlsx`,
         xlsx: allXlsx,
