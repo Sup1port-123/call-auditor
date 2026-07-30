@@ -4,7 +4,7 @@ import { parseRubricJson, type RubricDimension } from "@/lib/rubric";
 
 // Minimum words a transcript must have to be worth scoring.
 const MIN_TRANSCRIPT_WORDS = 30;
-// Minimum call duration (seconds) â calls shorter than this are not scored.
+// Minimum call duration (seconds) Ã¢ÂÂ calls shorter than this are not scored.
 const MIN_CALL_DURATION_SECONDS = 60;
 
 type TranscriptLike = {
@@ -46,7 +46,7 @@ async function saveCompleted(
     .eq("id", auditId);
 
   if (error?.message?.includes("compliance_json")) {
-    // Column not yet added to Supabase â save without compliance data
+    // Column not yet added to Supabase Ã¢ÂÂ save without compliance data
     const { compliance_json: _omit, ...rest } = fields as Record<string, unknown> & { compliance_json?: unknown };
     await supabase.from("audits").update(rest).eq("id", auditId);
     return;
@@ -151,11 +151,11 @@ export async function finalizeAudit(
       .from("audits")
       .update({
         status: "failed",
-        transcript: transcriptForScoring,
+        transcript: transcriptText,
         duration_seconds: durationSeconds,
         audited_at: new Date().toISOString(),
         error_message:
-          "No meaningful conversation detected â call was too short or silent.",
+          "No meaningful conversation detected Ã¢ÂÂ call was too short or silent.",
       })
       .eq("id", auditId);
     return { status: "failed" };
@@ -169,7 +169,7 @@ export async function finalizeAudit(
         transcript: transcriptText,
         duration_seconds: durationSeconds,
         audited_at: new Date().toISOString(),
-        error_message: `Call too short to audit â ${durationSeconds}s is under the ${MIN_CALL_DURATION_SECONDS}s minimum.`,
+        error_message: `Call too short to audit Ã¢ÂÂ ${durationSeconds}s is under the ${MIN_CALL_DURATION_SECONDS}s minimum.`,
       })
       .eq("id", auditId);
     return { status: "failed" };
@@ -189,9 +189,14 @@ export async function finalizeAudit(
     rubric = parseRubricJson(agent?.rubric_json) ?? undefined;
   }
 
-  try {
+  // Prepend disconnect reason metadata for the LLM (kept separate from stored transcript so the raw transcript column stays clean).
+const transcriptForScoring = audit.disconnect_reason
+  ? `CALL METADATA:\nDisconnect Reason: ${audit.disconnect_reason}\n\n${transcriptText}`
+  : transcriptText;
+
+try {
     const evaluation = await scoreTranscript({
-      transcript: transcriptText,
+      transcript: transcriptForScoring,
       preset: audit.preset ?? undefined,
       strictness: audit.strictness ?? undefined,
       customFocus: audit.custom_focus ?? undefined,
@@ -200,7 +205,7 @@ export async function finalizeAudit(
       rubric,
     });
 
-    // Non-interaction call detection â exclude these calls from quality metrics.
+    // Non-interaction call detection Ã¢ÂÂ exclude these calls from quality metrics.
     const summaryLower = (evaluation.summary ?? "").toLowerCase();
     const isNonInteraction = [
       "no customer interaction",
@@ -221,7 +226,7 @@ export async function finalizeAudit(
         audited_at: new Date().toISOString(),
         overall_score: null,
         summary: evaluation.summary,
-        error_message: "Non-interaction call â excluded from quality scoring",
+        error_message: "Non-interaction call Ã¢ÂÂ excluded from quality scoring",
       });
       return { status: "excluded" };
     }
