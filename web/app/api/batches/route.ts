@@ -22,12 +22,13 @@ type BatchRow = {
   url: string;
   call_id: string | null;
   mobile: string | null;
+  disconnect_reason: string | null;
 };
 
 type BatchBody = {
   filename?: string;
   url_column?: string;
-  rows?: unknown;   // new format: [{url, call_id, mobile}]
+  rows?: unknown;   // new format: [{url, call_id, mobile, disconnect_reason}]
   urls?: unknown;   // legacy format: string[]
   agent_id?: string | null;
   preset?: string;
@@ -57,19 +58,20 @@ export async function POST(req: Request) {
     if (Array.isArray(body.rows)) {
       for (const r of body.rows as unknown[]) {
         if (r && typeof r === "object" && "url" in r) {
-          const row = r as { url?: unknown; call_id?: unknown; mobile?: unknown };
+          const row = r as { url?: unknown; call_id?: unknown; mobile?: unknown; disconnect_reason?: unknown };
           const url = typeof row.url === "string" ? row.url.trim() : "";
           inputRows.push({
             url,
             call_id: typeof row.call_id === "string" ? row.call_id.trim() || null : null,
             mobile: typeof row.mobile === "string" ? row.mobile.trim() || null : null,
+            disconnect_reason: typeof row.disconnect_reason === "string" ? row.disconnect_reason.trim() || null : null,
           });
         }
       }
     } else if (Array.isArray(body.urls)) {
       for (const u of body.urls as unknown[]) {
         const url = typeof u === "string" ? u.trim() : "";
-        inputRows.push({ url, call_id: null, mobile: null });
+        inputRows.push({ url, call_id: null, mobile: null, disconnect_reason: null });
       }
     } else {
       return NextResponse.json(
@@ -140,6 +142,7 @@ export async function POST(req: Request) {
       target: r.url,
       call_id: r.call_id,
       mobile_number: r.mobile,
+      disconnect_reason: r.disconnect_reason,
       preset,
       strictness,
       custom_focus: customFocus,
