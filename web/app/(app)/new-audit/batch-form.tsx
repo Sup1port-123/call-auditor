@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import LottiePlayer from "@/components/lottie-player";
 import { AUDIT_PRESETS, STRICTNESS_LEVELS } from "@/lib/rubric";
-import { detectUrlColumn, detectCallIdColumn, detectMobileColumn } from "@/lib/types/batch";
+import { detectUrlColumn, detectCallIdColumn, detectMobileColumn, detectDisconnectReasonColumn } from "@/lib/types/batch";
 
 const MAX_URLS = 1000;
 
@@ -12,6 +12,7 @@ type ParsedRow = {
   url: string;
   callId: string | null;
   mobile: string | null;
+  disconnectReason: string | null;
 };
 
 export default function BatchForm({
@@ -28,6 +29,7 @@ export default function BatchForm({
   const [urlColumn, setUrlColumn] = useState<string | null>(null);
   const [callIdColumn, setCallIdColumn] = useState<string | null>(null);
   const [mobileColumn, setMobileColumn] = useState<string | null>(null);
+  const [disconnectReasonColumn, setDisconnectReasonColumn] = useState<string | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [parsing, setParsing] = useState(false);
   const [skippedCount, setSkippedCount] = useState(0);
@@ -46,6 +48,7 @@ export default function BatchForm({
     setUrlColumn(null);
     setCallIdColumn(null);
     setMobileColumn(null);
+    setDisconnectReasonColumn(null);
     setParseError(null);
     setSkippedCount(0);
     if (!f) return;
@@ -71,6 +74,7 @@ export default function BatchForm({
 
       const callCol = detectCallIdColumn(headers);
       const mobCol = detectMobileColumn(headers);
+      const discCol = detectDisconnectReasonColumn(headers);
 
       const seen = new Set<string>();
       const extracted: ParsedRow[] = [];
@@ -87,11 +91,11 @@ export default function BatchForm({
           url: v,
           callId: callCol ? String(r[callCol] ?? "").trim() || null : null,
           mobile: mobCol ? String(r[mobCol] ?? "").trim() || null : null,
+          disconnectReason: discCol ? String(r[discCol] ?? "").trim() || null : null,
         });
       }
-      setSkippedCount(skipped);
       if (extracted.length === 0) {
-        throw new Error(`Column "${col}" has no valid http(s) URLs.`);
+        throw new Error(`Column "${col}" has no valid http(s) URLs with call_status=ended.`);
       }
       if (extracted.length > MAX_URLS) {
         throw new Error(
@@ -101,7 +105,9 @@ export default function BatchForm({
       setUrlColumn(col);
       setCallIdColumn(callCol);
       setMobileColumn(mobCol);
+      setDisconnectReasonColumn(discCol);
       setParsedRows(extracted);
+      setSkippedCount(skipped);
     } catch (err) {
       setParseError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -132,6 +138,7 @@ export default function BatchForm({
             url: r.url,
             call_id: r.callId,
             mobile: r.mobile,
+            disconnect_reason: r.disconnectReason,
           })),
           agent_id: agentId,
           preset,
@@ -180,7 +187,7 @@ export default function BatchForm({
       <Field
         index="01"
         label="Spreadsheet"
-        hint='CSV or Excel (.xlsx). Otis auto-detects recording_url, call_id, and mobile number columns.'
+        hint='CSV or Excel (.xlsx). Otis auto-detects recording_url, call_id, mobile number, and disconnect_reason columns.'
       >
         <input
           ref={fileRef}
@@ -227,13 +234,12 @@ export default function BatchForm({
         {parsedRows.length > 0 && urlColumn && (
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 text-emerald-800 text-sm px-4 py-3 mt-3 space-y-1">
             <div>
+              Found{" "}
               <strong className="tabular-nums">{parsedRows.length}</strong>{" "}
-              calls loaded from column <strong>{urlColumn}</strong>
+              recording URLs in column <strong>{urlColumn}</strong>.
               {skippedCount > 0 && (
-                <span className="text-amber-600 ml-1">
-                  — {skippedCount} skipped (not ended)
-                </span>
-              )}.
+                <span className="text-amber-700 ml-2">({skippedCount} skipped — call_status ≠ ended)</span>
+              )}
             </div>
             {callIdColumn && (
               <div className="text-xs text-emerald-700">
@@ -243,6 +249,11 @@ export default function BatchForm({
             {mobileColumn && (
               <div className="text-xs text-emerald-700">
                 ✓ Mobile number column detected: <strong>{mobileColumn}</strong>
+              </div>
+            )}
+            {disconnectReasonColumn && (
+              <div className="text-xs text-emerald-700">
+                ✓ Disconnect reason column detected: <strong>{disconnectReasonColumn}</strong>
               </div>
             )}
           </div>
