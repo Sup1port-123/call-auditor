@@ -1,4 +1,4 @@
-// Ported from rubric.py â keep in sync if either side changes.
+// Ported from rubric.py Ã¢ÂÂ keep in sync if either side changes.
 
 export type RubricDimension = {
   key: string;
@@ -124,7 +124,7 @@ export const SCRIPT_COMPLIANCE_CHECKS: ComplianceCheckDef[] = [
     name: "Resolution / Solution Provided",
     instruction:
       "Did the agent provide a clear solution, answer, or resolution to the customer's issue? " +
-      "Acknowledgment alone is not enough â the agent must have addressed the issue concretely. " +
+      "Acknowledgment alone is not enough Ã¢ÂÂ the agent must have addressed the issue concretely. " +
       "Mark FAIL if no resolution was offered.",
   },
   {
@@ -168,7 +168,7 @@ export const INBOUND_COMPLIANCE_CHECKS: ComplianceCheckDef[] = [
       "did the agent FIRST ask the GP's specific reason or concern before arranging it? " +
       "(e.g. 'Aapko kaunsi problem aa rahi hai?' before saying 'Main callback schedule karta hoon'.) " +
       "Mark FAIL if a callback or escalation was arranged without the agent first understanding the GP's reason. " +
-      "Mark PASS with evidence 'not applicable â no callback arranged' if no callback occurred on this call.",
+      "Mark PASS with evidence 'not applicable Ã¢ÂÂ no callback arranged' if no callback occurred on this call.",
   },
   {
     key: "followed_inbound_script",
@@ -321,9 +321,9 @@ const SYSTEM_PROMPT_TEMPLATE = `You are an expert QA auditor for AI-driven outbo
 
 You will be given a timestamped transcript. Speaker labels (Speaker A, Speaker B, etc.) may or may not be present:
 - If labels ARE present, they were produced by automatic diarization and are usually reliable but can occasionally be wrong. Determine which speaker is the AI based on the opening turns (the AI typically greets and identifies the company), then evaluate that speaker's behavior. If diarization looks broken, note it in the rationales.
-- If labels are NOT present, infer who is speaking from context â the AI is the caller.
+- If labels are NOT present, infer who is speaking from context Ã¢ÂÂ the AI is the caller.
 
-CRITICAL â NON-INTERACTION CALLS:
+CRITICAL Ã¢ÂÂ NON-INTERACTION CALLS:
 Before scoring anything, check whether an actual two-way conversation took place between the agent and the customer. A non-interaction call is one where:
 - The customer immediately put the call on hold and no real dialogue occurred
 - The call was silent or disconnected before the customer spoke substantively
@@ -331,9 +331,9 @@ Before scoring anything, check whether an actual two-way conversation took place
 
 If this is a non-interaction call:
 - Set overall_score to 1
-- Set every rubric dimension score to null with rationale "No customer interaction occurred â call was on hold or silent"
-- Set summary to clearly explain that no real conversation took place. ALWAYS include the exact phrase "no customer interaction" in the summary â the system uses this phrase to detect and exclude the call from agent quality metrics.
-- Set all script_compliance checks to passed: false with evidence "No customer interaction â agent had no opportunity to fulfill this check"
+- Set every rubric dimension score to null with rationale "No customer interaction occurred Ã¢ÂÂ call was on hold or silent"
+- Set summary to clearly explain that no real conversation took place. ALWAYS include the exact phrase "no customer interaction" in the summary Ã¢ÂÂ the system uses this phrase to detect and exclude the call from agent quality metrics.
+- Set all script_compliance checks to passed: false with evidence "No customer interaction Ã¢ÂÂ agent had no opportunity to fulfill this check"
 - Do NOT reward the agent for a polite greeting on a call where the customer never engaged
 
 AUDIT FOCUS:
@@ -391,7 +391,7 @@ function formatRubric(
 
 function formatComplianceBlock(checks: ComplianceCheckDef[]): string {
   return checks
-    .map((c, i) => `${i + 1}. ${c.key} â "${c.name}": ${c.instruction}`)
+    .map((c, i) => `${i + 1}. ${c.key} Ã¢ÂÂ "${c.name}": ${c.instruction}`)
     .join("\n");
 }
 
@@ -428,7 +428,7 @@ export function buildSystemPrompt(opts: {
   // Build dynamic compliance JSON shape and optional call_reason field
   const complianceJsonShape = buildComplianceJsonShape(checks);
   const callReasonField = inbound
-    ? `,\n  "call_reason": "<brief category of what the GP was calling about â e.g. 'loan status query', 'app login issue', 'payout delay', 'callback request', 'product information', 'complaint'>"`
+    ? `,\n  "call_reason": "<brief category of what the GP was calling about Ã¢ÂÂ e.g. 'loan status query', 'app login issue', 'payout delay', 'callback request', 'product information', 'complaint'>"`
     : "";
 
   let prompt = SYSTEM_PROMPT_TEMPLATE
@@ -440,18 +440,16 @@ export function buildSystemPrompt(opts: {
     .replace("{call_reason_field}", callReasonField);
 
 
-  // Inbound-specific: do not penalize closing when the customer hung up first
-  if (inbound) {
-    prompt +=
-      `\n\nINBOUND CALL DISCONNECT POLICY:\n` +
+  // Do not penalize closing when the customer hung up first (applies to all agents)
+  prompt +=
+      `\n\nCALL DISCONNECT POLICY:\n` +
       `The transcript may be prefixed with a "CALL METADATA:" block that includes a "Disconnect Reason:" line.\n` +
       `If the disconnect reason contains "disconnected by user" or otherwise indicates the customer/user ended the call:\n` +
-      `- Do NOT penalize the agent for an incomplete or missing closing — the customer chose to hang up before the agent could close.\n` +
-      `- Score the "closing" rubric dimension as null with rationale: "Customer disconnected the call — agent had no opportunity to complete closing. Score withheld per policy."\n` +
-      `- Mark the "closing_assistance" compliance check as passed: true with evidence: "Not applicable — customer disconnected the call before the agent could close."\n` +
+      `- Do NOT penalize the agent for an incomplete or missing closing â the customer chose to hang up before the agent could close.\n` +
+      `- Score the "closing" rubric dimension as null with rationale: "Customer disconnected the call â agent had no opportunity to complete closing. Score withheld per policy."\n` +
+      `- Mark the "closing_assistance" compliance check as passed: true with evidence: "Not applicable â customer disconnected the call before the agent could close."\n` +
       `- For "followed_inbound_script", do not fail step (6) professional closing if the disconnect was user-initiated.\n` +
       `If no disconnect reason is mentioned, or the reason is anything other than user-initiated, evaluate closing normally.`;
-  }
   if (opts.knowledgeBase?.trim()) {
     const kb = opts.knowledgeBase.trim().slice(0, 60000);
     prompt +=
