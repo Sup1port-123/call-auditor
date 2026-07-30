@@ -16,55 +16,31 @@ export function newBatchId(): string {
   return `bat-${stamp}-${Math.random().toString(16).slice(2, 8)}`;
 }
 
-// Header names (normalized: lowercased, alphanumeric only) that signal a
-// recording-URL column, best match first.
 const URL_COLUMN_PATTERNS = [
-  "recordingurl",
-  "recordinglink",
-  "callrecordingurl",
-  "callrecording",
-  "audiourl",
-  "audiolink",
-  "callurl",
-  "recording",
-  "audio",
-  "recordingfile",
-  "mp3url",
-  "mp3",
-  "fileurl",
-  "url",
-  "link",
+  "recordingurl","recordinglink","callrecordingurl","callrecording",
+  "audiourl","audiolink","callurl","recording","audio","recordingfile",
+  "mp3url","mp3","fileurl","url","link",
 ];
 
-// Header names for call ID column
 const CALL_ID_COLUMN_PATTERNS = [
-  "callid",
-  "callingid",
-  "uniqueid",
-  "callidentifier",
-  "recordid",
+  "callid","callingid","uniqueid","callidentifier","recordid",
 ];
 
-// Header names for customer mobile/phone column
 const MOBILE_COLUMN_PATTERNS = [
-  "mobilenumber",
-  "customermobile",
-  "customerphone",
-  "mobile",
-  "phonenumber",
-  "phone",
-  "contactnumber",
-  "customernumber",
-  "mobilenum",
-  "mob",
+  "mobilenumber","customermobile","customerphone","mobile","phonenumber",
+  "phone","contactnumber","customernumber","mobilenum","mob",
+];
+
+const DISCONNECT_REASON_COLUMN_PATTERNS = [
+  "disconnectreason","disconnectionreason","calldisconnectreason",
+  "calldisconnectionreason","hangupcause","hangupcode","hangup",
+  "disconnectedby","callendedby","endedby","disconnectstatus",
 ];
 
 function normalizeHeader(h: string): string {
   return h.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-// Pick the column most likely to hold recording URLs. Returns the exact
-// original header string, or null if nothing matches.
 export function detectUrlColumn(headers: string[]): string | null {
   const normalized = headers.map((h) => ({ raw: h, norm: normalizeHeader(h) }));
   for (const pattern of URL_COLUMN_PATTERNS) {
@@ -78,7 +54,6 @@ export function detectUrlColumn(headers: string[]): string | null {
   return null;
 }
 
-// Pick the column most likely to hold a call ID.
 export function detectCallIdColumn(headers: string[]): string | null {
   const normalized = headers.map((h) => ({ raw: h, norm: normalizeHeader(h) }));
   for (const pattern of CALL_ID_COLUMN_PATTERNS) {
@@ -92,7 +67,6 @@ export function detectCallIdColumn(headers: string[]): string | null {
   return null;
 }
 
-// Pick the column most likely to hold a customer mobile number.
 export function detectMobileColumn(headers: string[]): string | null {
   const normalized = headers.map((h) => ({ raw: h, norm: normalizeHeader(h) }));
   for (const pattern of MOBILE_COLUMN_PATTERNS) {
@@ -100,6 +74,19 @@ export function detectMobileColumn(headers: string[]): string | null {
     if (exact) return exact.raw;
   }
   for (const pattern of MOBILE_COLUMN_PATTERNS) {
+    const partial = normalized.find((h) => h.norm.includes(pattern));
+    if (partial) return partial.raw;
+  }
+  return null;
+}
+
+export function detectDisconnectReasonColumn(headers: string[]): string | null {
+  const normalized = headers.map((h) => ({ raw: h, norm: normalizeHeader(h) }));
+  for (const pattern of DISCONNECT_REASON_COLUMN_PATTERNS) {
+    const exact = normalized.find((h) => h.norm === pattern);
+    if (exact) return exact.raw;
+  }
+  for (const pattern of DISCONNECT_REASON_COLUMN_PATTERNS) {
     const partial = normalized.find((h) => h.norm.includes(pattern));
     if (partial) return partial.raw;
   }
