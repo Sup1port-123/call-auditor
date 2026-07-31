@@ -62,7 +62,7 @@ export async function finalizeAudit(
 
   const { data: audit } = await supabase
     .from("audits")
-    .select("id, status, transcript_id, preset, strictness, custom_focus, agent_id, disconnect_reason")
+    .select("id, status, transcript_id, preset, strictness, custom_focus, agent_id, disconnect_reason, batch_id")
     .eq("id", auditId)
     .maybeSingle();
 
@@ -262,6 +262,31 @@ try {
         score: evaluation.overall_score,
         recommendations: evaluation.improvement_recommendations ?? [],
       }).catch(console.error);
+    }
+
+    // Auto-trigger report email when this batch finishes (non-blocking, best-effort)
+    if (audit.batch_id) {
+    import("@/lib/report").then(async ({ generateAndSendReport, istParts, parseEmails }) => {
+      const { count } = await supabase
+        .from("audits")
+        .select("id", { count: "exact", head: true })
+        .eq("batch_id", audit.batch_id)
+        .in("status", ["transcribing", "scoring"]);
+      if (count === 0) {
+        const { data: settings } = await supabase
+          .from("report_settings")
+          .select("emails, enabled")
+          .eq("id", "default")
+          .maybeSingle();
+        if (settings?.enabled && settings?.emails) {
+          const emails = parseEmails(settings.emails);
+          if (emails.length > 0) {
+            const { date } = istParts();
+            await generateAndSendReport({ emails, istDate: date });
+          }
+        }
+      }
+    }).catch(console.error);
     }
 
     return { status: "completed" };
