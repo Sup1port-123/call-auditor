@@ -275,14 +275,18 @@ try {
       if (count === 0) {
         const { data: settings } = await supabase
           .from("report_settings")
-          .select("emails, enabled")
+          .select("emails, enabled, last_sent_date")
           .eq("id", "default")
           .maybeSingle();
-        if (settings?.enabled && settings?.emails) {
+        const { date } = istParts();
+        if (settings?.enabled && settings?.emails && settings.last_sent_date !== date) {
           const emails = parseEmails(settings.emails);
           if (emails.length > 0) {
-            const { date } = istParts();
             await generateAndSendReport({ emails, istDate: date });
+            await supabase
+              .from("report_settings")
+              .update({ last_sent_date: date })
+              .eq("id", "default");
           }
         }
       }
