@@ -129,7 +129,7 @@ export function dateBounds(f: AuditFilters): { gte?: string; lte?: string } {
 export function callIdOrClause(f: AuditFilters): string | null {
   if (f.callIds.length === 0) return null;
   return f.callIds
-    .flatMap((id) => [`target.ilike.*${id}*`, `call_id.ilike.*${id}*`])
+    .flatMap((id) => [`target.ilike.*${id}*`, `call_id.eq.${id}`])
     .join(",");
 }
 
