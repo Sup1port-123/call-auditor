@@ -64,6 +64,7 @@ type ReportRow = {
   overall_score: number | null;
   summary: string | null;
   what_was_lacking: string | null;
+  strengths: string | null;
   target: string | null;
   agent_id: string | null;
   compliance_json: string | null;
@@ -86,6 +87,101 @@ function extractCallReason(complianceJson: string | null): string {
   } catch {
     return "Unknown";
   }
+}
+
+
+// ---- Insight helpers --------------------------------------------------------
+
+function shortId(id: string): string {
+  return id.slice(0, 8).toUpperCase();
+}
+
+function auditLink(id: string): string {
+  return '<a href="https://call-auditor-otis4.vercel.app/audits/' + id + '" style="color:#6366f1;text-decoration:none;font-family:monospace;">' + shortId(id) + '</a>';
+}
+
+function splitToPoints(text: string | null): string[] {
+  if (!text) return [];
+  return text
+    .split(/\.\s+|\n+|;\s*/)
+    .map(s => s.trim().replace(/^[-\u2022*\d]+[.)\s*/, "").trim())
+    .filter(s => s.length >= 12 && s.length <= 200);
+}
+
+function aggregateInsights(
+  rows: ReportRow[],
+  getText: (row: ReportRow) => string | null,
+  topN = 5,
+): { text: string; count: number; ids: string[] }[] {
+  const map = new Map<string, { displayText: string; count: number; ids: string[] }>();
+  for (const row of rows) {
+    const points = splitToPoints(getText(row));
+    for (const point of points) {
+      const key = point.toLowerCase().replace(/['".,!?]/g, "").replace(/\s+/g, " ").slice(0, 55).trim();
+      if (key.length < 10) continue;
+      if (!map.has(key)) map.set(key, { displayText: point, count: 0, ids: [] });
+      const entry = map.get(key)!;
+      entry.count++;
+      if (!entry.ids.includes(row.id)) entry.ids.push(row.id);
+    }
+  }
+  return Array.from(map.values())
+    .sort((a, b) => b.count - a.count)
+    .slice(0, topN)
+    .map(({ displayText, count, ids }) => ({ text: displayText, count, ids: ids.slice(0, 5) }));
+}
+
+function renderInsightBullets(
+  rows: ReportRow[],
+  getText: (row: ReportRow) => string | null,
+  title: string,
+  emoji: string,
+  bulletColor: string,
+): string {
+  const insights = aggregateInsights(rows, getText);
+  if (insights.length === 0) return "";
+  const items = insights.map(function(ins: { text: string; count: number; ids: string[] }) {
+    return '<li style="margin:10px 0;line-height:1.6;">' +
+      '<span style="color:' + bulletColor + ';font-weight:600;">&#9658;</span>' +
+      '<span style="color:#111;"> ' + ins.text + '</span>' +
+      '<span style="color:#6b7280;font-size:11px;"> &mdash; ' + ins.count + ' call' + (ins.count === 1 ? '' : 's') + '</span>' +
+      '<div style="font-size:11px;color:#9ca3af;margin-top:2px;">Call IDs: ' + ins.ids.map(auditLink).join(', ') + '</div>' +
+      '</li>';
+  }).join('');
+  return '<h2 style="color:#111;font-size:16px;margin:28px 0 10px 0;font-weight:700;">' + emoji + ' ' + title + '</h2>' +
+    '<ul style="margin:0;padding:12px 16px 12px 28px;background:#fff;border:1px solid #e5e7eb;border-radius:6px;list-style:none;">' +
+    items + '</ul>';
+}
+
+function renderTransferReasons(rows: ReportRow[]): string {
+  const keywords = ["transfer", "escalat", "senior", "manager", "supervisor", "team lead"];
+  const map = new Map<string, { displayText: string; ids: string[] }>();
+  for (const row of rows) {
+    if (!row.summary) continue;
+    const sentences = row.summary.split(/[.!?]+/).map(s => s.trim()).filter(Boolean);
+    for (const sentence of sentences) {
+      const lower = sentence.toLowerCase();
+      if (!keywords.some(kw => lower.includes(kw))) continue;
+      const key = lower.replace(/['".,!?]/g, "").replace(/\s+/g, " ").slice(0, 60).trim();
+      if (key.length < 10) continue;
+      if (!map.has(key)) map.set(key, { displayText: sentence.trim(), ids: [] });
+      const entry = map.get(key)!;
+      if (!entry.ids.includes(row.id)) entry.ids.push(row.id);
+    }
+  }
+  if (map.size === 0) return "";
+  const sorted = Array.from(map.values()).sort((a, b) => b.ids.length - a.ids.length).slice(0, 5);
+  const items = sorted.map(function(item: { displayText: string; ids: string[] }) {
+    return '<li style="margin:10px 0;line-height:1.6;">' +
+      '<span style="color:#f59e0b;font-weight:600;">&#9658;</span>' +
+      '<span style="color:#111;"> ' + item.displayText + '</span>' +
+      '<span style="color:#6b7280;font-size:11px;"> &mdash; ' + item.ids.length + ' call' + (item.ids.length === 1 ? '' : 's') + '</span>' +
+      '<div style="font-size:11px;color:#9ca3af;margin-top:2px;">Call IDs: ' + item.ids.slice(0, 5).map(auditLink).join(', ') + '</div>' +
+      '</li>';
+  }).join('');
+  return '<h2 style="color:#111;font-size:16px;margin:28px 0 10px 0;font-weight:700;">&#128260; Top Call Transfer / Escalation Reasons</h2>' +
+    '<ul style="margin:0;padding:12px 16px 12px 28px;background:#fff;border:1px solid #e5e7eb;border-radius:6px;list-style:none;">' +
+    items + '</ul>';
 }
 
 // ---- Email transport ---------------------------------------------------------
@@ -319,6 +415,41 @@ function renderAgentTable(rows: ReportRow[]): string {
 // ---- Inbound-specific sections ----------------------------------------------
 
 function renderQueryReasons(rows: ReportRow[]): string {
+  const reasons = new Map<string, { count: number; ids: string[] }>();
+  for (const row of rows) {
+    const reason = extractCallReason(row.compliance_json);
+    const key = reason.toLowerCase().trim();
+    if (key === "unknown" || key === "") continue;
+    const display = reason.charAt(0).toUpperCase() + reason.slice(1);
+    if (!reasons.has(display)) reasons.set(display, { count: 0, ids: [] });
+    const entry = reasons.get(display)!;
+    entry.count++;
+    if (!entry.ids.includes(row.id)) entry.ids.push(row.id);
+  }
+  if (reasons.size === 0) return "";
+  const sorted = Array.from(reasons.entries()).sort((a, b) => b[1].count - a[1].count).slice(0, 5);
+  const total = sorted.reduce((s, e) => s + e[1].count, 0);
+  const reasonRows = sorted.map(function(e: [string, { count: number; ids: string[] }]) {
+    const reason = e[0]; const count = e[1].count; const ids = e[1].ids;
+    const p = total > 0 ? Math.round((count / total) * 100) : 0;
+    const idLinks = ids.slice(0, 5).map(auditLink).join(', ');
+    return '<tr style="border-bottom:1px solid #e5e7eb;">' +
+      '<td style="padding:9px 12px;"><div style="font-weight:500;">' + reason + '</div>' +
+      '<div style="font-size:11px;color:#9ca3af;margin-top:2px;">Call IDs: ' + idLinks + '</div></td>' +
+      '<td style="padding:9px 12px;text-align:center;font-weight:600;">' + count + '</td>' +
+      '<td style="padding:9px 12px;"><div style="background:#e5e7eb;border-radius:4px;height:10px;width:100%;max-width:160px;"><div style="background:#6366f1;border-radius:4px;height:10px;width:' + p + '%;"></div></div></td>' +
+      '<td style="padding:9px 12px;text-align:center;color:#6b7280;">' + p + '%</td></tr>';
+  }).join('');
+  return '<h2 style="color:#111;font-size:16px;margin:28px 0 10px 0;font-weight:700;">&#128202; Top 5 Query Types Received</h2>' +
+    '<p style="color:#555;font-size:13px;margin:0 0 10px 0;">Highest-volume inbound query reasons today</p>' +
+    '<table style="width:100%;border-collapse:collapse;font-size:13px;background:#fff;border:1px solid #e5e7eb;">' +
+    '<thead><tr style="background:#f3f4f6;text-align:left;"><th style="padding:9px 12px;">Query Type</th><th style="padding:9px 12px;text-align:center;">Count</th><th style="padding:9px 12px;">Distribution</th><th style="padding:9px 12px;text-align:center;">%</th></tr></thead>' +
+    '<tbody>' + reasonRows + '</tbody></table>';
+}
+
+// ---- Inbound-specific sections ----------------------------------------------
+
+function renderQueryReasons(rows: ReportRow[]): string {
   const reasons = new Map<string, number>();
   for (const row of rows) {
     const reason = extractCallReason(row.compliance_json);
@@ -529,6 +660,9 @@ async function buildInboundHtml(rows: ReportRow[], istDate: string): Promise<str
   const complianceSection = renderInboundComplianceSection(rows);
   const badCallsSection = renderCallSection(badGroups, "🔻", "Calls Needing Attention (Score < 60%)", "#dc2626");
   const goodCallsSection = renderCallSection(goodGroups, "⭐", "Best Calls (Score ≥ 80%)", "#16a34a");
+  const weaknessInsights = renderInsightBullets(rows, r => r.what_was_lacking, "Major Areas Where Agents Lacked", "❌", "#dc2626");
+  const strengthInsights = renderInsightBullets(rows, r => r.strengths, "Areas Where Agents Did Well", "✅", "#16a34a");
+  const transferReasons = renderTransferReasons(rows);
 
   return `
   <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:680px;margin:0 auto;color:#111;">
@@ -537,6 +671,9 @@ async function buildInboundHtml(rows: ReportRow[], istDate: string): Promise<str
       ${stats}
       ${agentTable}
       ${queryReasons}
+      ${weaknessInsights}
+      ${strengthInsights}
+      ${transferReasons}
       ${complianceSection}
       ${badCallsSection}
       ${goodCallsSection}
@@ -613,7 +750,7 @@ export async function generateAndSendReport(opts: {
   // Fetch all completed audits for the day with agent info
   const { data: allRows, error } = await supabase
     .from("audits")
-    .select("id, overall_score, summary, what_was_lacking, target, agent_id, compliance_json, agents(name)")
+    .select("id, overall_score, summary, what_was_lacking, strengths, target, agent_id, compliance_json, agents(name)")
     .gte("timestamp", gte)
     .lte("timestamp", lte)
     .in("status", ["completed", "excluded"])
