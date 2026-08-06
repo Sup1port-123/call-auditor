@@ -61,6 +61,7 @@ export function parseEmails(raw: string | null | undefined): string[] {
 // Lightweight row type for report HTML building (not the full XLSX export row)
 type ReportRow = {
   id: string;
+  call_id: string | null;
   overall_score: number | null;
   summary: string | null;
   what_was_lacking: string | null;
@@ -96,8 +97,10 @@ function shortId(id: string): string {
   return id.slice(0, 8).toUpperCase();
 }
 
-function auditLink(id: string): string {
-  return '<a href="https://call-auditor-otis4.vercel.app/audits/' + id + '" style="color:#6366f1;text-decoration:none;font-family:monospace;">' + shortId(id) + '</a>';
+type InsightId = { auditId: string; label: string };
+
+function auditLink({ auditId, label }: InsightId): string {
+  return `<a href="https://call-auditor-otis4.vercel.app/audits/${auditId}" style="color:#6366f1;text-decoration:none;font-family:monospace;">${label}</a>`;
 }
 
 function splitToPoints(text: string | null): string[] {
@@ -112,17 +115,18 @@ function aggregateInsights(
   rows: ReportRow[],
   getText: (row: ReportRow) => string | null,
   topN = 5,
-): { text: string; count: number; ids: string[] }[] {
-  const map = new Map<string, { displayText: string; count: number; ids: string[] }>();
+): { text: string; count: number; ids: InsightId[] }[] {
+  const map = new Map<string, { displayText: string; count: number; ids: InsightId[] }>();
   for (const row of rows) {
     const points = splitToPoints(getText(row));
+    const label = row.call_id || shortId(row.id);
     for (const point of points) {
       const key = point.toLowerCase().replace(/['".,!?]/g, "").replace(/\s+/g, " ").slice(0, 55).trim();
       if (key.length < 10) continue;
       if (!map.has(key)) map.set(key, { displayText: point, count: 0, ids: [] });
       const entry = map.get(key)!;
       entry.count++;
-      if (!entry.ids.includes(row.id)) entry.ids.push(row.id);
+      if (!entry.ids.find(i => i.auditId === row.id)) entry.ids.push({ auditId: row.id, label });
     }
   }
   return Array.from(map.values())
@@ -155,10 +159,11 @@ function renderInsightBullets(
 
 function renderTransferReasons(rows: ReportRow[]): string {
   const keywords = ["transfer", "escalat", "senior", "manager", "supervisor", "team lead"];
-  const map = new Map<string, { displayText: string; ids: string[] }>();
+  const map = new Map<string, { displayText: string; ids: InsightId[] }>();
   for (const row of rows) {
     if (!row.summary) continue;
     const sentences = row.summary.split(/[.!?]+/).map(s => s.trim()).filter(Boolean);
+    const label = row.call_id || shortId(row.id);
     for (const sentence of sentences) {
       const lower = sentence.toLowerCase();
       if (!keywords.some(kw => lower.includes(kw))) continue;
@@ -166,7 +171,7 @@ function renderTransferReasons(rows: ReportRow[]): string {
       if (key.length < 10) continue;
       if (!map.has(key)) map.set(key, { displayText: sentence.trim(), ids: [] });
       const entry = map.get(key)!;
-      if (!entry.ids.includes(row.id)) entry.ids.push(row.id);
+      if (!entry.ids.find(i => i.auditId === row.id)) entry.ids.push({ auditId: row.id, label });
     }
   }
   if (map.size === 0) return "";
@@ -415,7 +420,7 @@ function renderAgentTable(rows: ReportRow[]): string {
 // ---- Inbound-specific sections ----------------------------------------------
 
 function renderQueryReasons(rows: ReportRow[]): string {
-  const reasons = new Map<string, { count: number; ids: string[] }>();
+  const reasons = new Map<string, { count: number; ids: InsightId[] }>();
   for (const row of rows) {
     const reason = extractCallReason(row.compliance_json);
     const key = reason.toLowerCase().trim();
@@ -424,7 +429,8 @@ function renderQueryReasons(rows: ReportRow[]): string {
     if (!reasons.has(display)) reasons.set(display, { count: 0, ids: [] });
     const entry = reasons.get(display)!;
     entry.count++;
-    if (!entry.ids.includes(row.id)) entry.ids.push(row.id);
+    const label = row.call_id || shortId(row.id);
+    if (!entry.ids.find(i => i.auditId === row.id)) entry.ids.push({ auditId: row.id, label });
   }
   if (reasons.size === 0) return "";
   const sorted = Array.from(reasons.entries()).sort((a, b) => b[1].count - a[1].count).slice(0, 5);
@@ -750,7 +756,7 @@ export async function generateAndSendReport(opts: {
   // Fetch all completed audits for the day with agent info
   const { data: allRows, error } = await supabase
     .from("audits")
-    .select("id, overall_score, summary, what_was_lacking, strengths, target, agent_id, compliance_json, agents(name)")
+    .select("id, call_id, overall_score, summary, what_was_lacking, strengths, target, agent_id, compliance_json, agents(name)")
     .gte("timestamp", gte)
     .lte("timestamp", lte)
     .in("status", ["completed", "excluded"])
