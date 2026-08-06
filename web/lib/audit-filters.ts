@@ -128,7 +128,9 @@ export function dateBounds(f: AuditFilters): { gte?: string; lte?: string } {
 // PostgREST `or=()` clause matching target against any call id, or null.
 export function callIdOrClause(f: AuditFilters): string | null {
   if (f.callIds.length === 0) return null;
-  return f.callIds.map((id) => `target.ilike.*${id}*`).join(",");
+  return f.callIds
+    .flatMap((id) => [`target.ilike.*${id}*`, `call_id.ilike.*${id}*`])
+    .join(",");
 }
 
 // Minimal, NON-recursive shape of a PostgREST filter builder. Kept tiny on
