@@ -264,36 +264,46 @@ try {
       }).catch(console.error);
     }
 
-    // Auto-trigger report email when this batch finishes (non-blocking, best-effort)
+    // Auto-trigger batch completion email (non-blocking, best-effort).
+  // Atomic guard: UPDATE .neq("last_sent_date", date) means only the
+  // first concurrent caller wins — the rest update 0 rows and skip.
     if (audit.batch_id) {
-    import("@/lib/report").then(async ({ generateAndSendReport, istParts, parseEmails }) => {
-      const { count } = await supabase
-        .from("audits")
-        .select("id", { count: "exact", head: true })
-        .eq("batch_id", audit.batch_id)
-        .in("status", ["transcribing", "scoring"]);
-      if (count === 0) {
+      const batchIdSnap = audit.batch_id;
+      Promise.resolve().then(async () => {
+        const { count: inFlight } = await supabase
+          .from("audits")
+          .select("id", { count: "exact", head: true })
+          .eq("batch_id", batchIdSnap)
+          .in("status", ["queued", "transcribing", "scoring"]);
+        if ((inFlight ?? 1) > 0) return;
+
+        const { generateAndSendReport, istParts, parseEmails } = await import("@/lib/report");
+        const { date } = istParts();
+
+        // Atomic claim — only the first concurrent caller gets claimed.length > 0
+        const { data: claimed } = await supabase
+          .from("report_settings")
+          .update({ last_sent_date: date })
+          .eq("id", "default")
+          .neq("last_sent_date", date)
+          .select("id");
+        if (!claimed || claimed.length === 0) return;
+
         const { data: settings } = await supabase
           .from("report_settings")
-          .select("emails, enabled, last_sent_date")
+          .select("emails, enabled")
           .eq("id", "default")
           .maybeSingle();
-        const { date } = istParts();
-        if (settings?.enabled && settings?.emails && settings.last_sent_date !== date) {
-          const emails = parseEmails(settings.emails);
-          if (emails.length > 0) {
-            await generateAndSendReport({ emails, istDate: date });
-            await supabase
-              .from("report_settings")
-              .update({ last_sent_date: date })
-              .eq("id", "default");
-          }
+        if (!settings?.enabled || !settings?.emails) return;
+
+        const emails = parseEmails(settings.emails);
+        if (emails.length > 0) {
+          await generateAndSendReport({ emails, istDate: date });
         }
-      }
-    }).catch(console.error);
+      }).catch(console.error);
     }
 
-    return { status: "completed" };
+return { status: "completed" };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await supabase
