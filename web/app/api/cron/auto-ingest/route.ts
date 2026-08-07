@@ -169,7 +169,21 @@ const eligible = allCalls.filter((c) => {
         continue;
       }
 
-      const auditRows = calls.map((c) => ({
+      // Dedup: skip recordings already audited
+      const candidateUrls = calls.map((c) => String(c.recording_link));
+      const { data: existingAudits } = await supabase
+        .from("audits")
+        .select("target")
+        .in("target", candidateUrls);
+      const alreadyAudited = new Set((existingAudits ?? []).map((a: { target: string }) => a.target));
+      const newCalls = calls.filter((c) => !alreadyAudited.has(String(c.recording_link)));
+      if (newCalls.length === 0) {
+        batchResults.push({ karta_agent_id: kartaAgentId, agent_name: agentName, skipped: "all already audited" });
+        await supabase.from("batches").delete().eq("id", batchId);
+        continue;
+      }
+
+      const auditRows = newCalls.map((c) => ({
         id: newAuditId(),
         timestamp: now,
         source: "batch",
