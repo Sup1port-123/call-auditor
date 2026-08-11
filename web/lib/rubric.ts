@@ -1,4 +1,4 @@
-// Ported from rubric.py Ã¢ÂÂ keep in sync if either side changes.
+// Ported from rubric.py  -  keep in sync if either side changes.
 
 export type RubricDimension = {
   key: string;
@@ -124,7 +124,7 @@ export const SCRIPT_COMPLIANCE_CHECKS: ComplianceCheckDef[] = [
     name: "Resolution / Solution Provided",
     instruction:
       "Did the agent provide a clear solution, answer, or resolution to the customer's issue? " +
-      "Acknowledgment alone is not enough Ã¢ÂÂ the agent must have addressed the issue concretely. " +
+      "Acknowledgment alone is not enough  -  the agent must have addressed the issue concretely. " +
       "Mark FAIL if no resolution was offered.",
   },
   {
@@ -168,7 +168,7 @@ export const INBOUND_COMPLIANCE_CHECKS: ComplianceCheckDef[] = [
       "did the agent FIRST ask the GP's specific reason or concern before arranging it? " +
       "(e.g. 'Aapko kaunsi problem aa rahi hai?' before saying 'Main callback schedule karta hoon'.) " +
       "Mark FAIL if a callback or escalation was arranged without the agent first understanding the GP's reason. " +
-      "Mark PASS with evidence 'not applicable Ã¢ÂÂ no callback arranged' if no callback occurred on this call.",
+      "Mark PASS with evidence 'not applicable  -  no callback arranged' if no callback occurred on this call.",
   },
   {
     key: "followed_inbound_script",
@@ -191,12 +191,79 @@ export function isInboundAgent(agentName?: string | null): boolean {
   return agentName.toLowerCase().includes("inbound");
 }
 
+/** Returns true if the agent is a Gro-Score credit-health agent. */
+export function isGroScoreAgent(agentName?: string | null): boolean {
+  if (!agentName) return false;
+  const n = agentName.toLowerCase().replace(/[-\s]/g, "");
+  return n.includes("groscore");
+}
+
+// ---------- Gro-Score Fatal Compliance Checks ---------------------------------
+// Binary pass/fail checks for the Gro-Score credit-health agent.
+
+export const GRO_SCORE_COMPLIANCE_CHECKS: ComplianceCheckDef[] = [
+  {
+    key: "ntc_routing_correct",
+    name: "NTC / No-Score Routing (Fatal B1)",
+    instruction:
+      "When current_score is -1, 0, NO_SCORE, or REPORT_NOT_FOUND: " +
+      "did the agent route to New-to-Credit verification WITHOUT calling or retrying a report tool, " +
+      "WITHOUT saying the report is unavailable or that there is a technical error, " +
+      "and WITHOUT using the 'एक क्षण, मैं सही जानकारी confirm कर रहा हूँ' line? " +
+      "If score was valid: did agent proceed normally to snapshot without looping? " +
+      "Mark FAIL if agent treated NO_SCORE/-1/0 as an error, retried a report tool, " +
+      "or told the customer the report is unavailable.",
+  },
+  {
+    key: "no_prohibited_guarantees",
+    name: "No Prohibited Promises or Guarantees (Fatal G1)",
+    instruction:
+      "Did the agent avoid ALL of the following: " +
+      "promising approval, promising a score increase, promising bureau correction, " +
+      "promising removal of settlement/write-off, or giving a fixed timeline for improvement? " +
+      "The 30% utilization level must be framed as general guidance - not as an RBI rule or guarantee. " +
+      "Mark FAIL if any explicit guarantee or promise was made at any point in the call.",
+  },
+  {
+    key: "no_data_fabrication",
+    name: "No Fabricated Report Data (Fatal G2)",
+    instruction:
+      "Did the agent use ONLY verified live-report data and customer-confirmed answers? " +
+      "Mark FAIL if the agent invented any lender name, account detail, overdue amount, " +
+      "DPD count, enquiry, or any other data point not present in the live report. " +
+      "Also mark FAIL if the agent missed a mandatory escalation trigger: " +
+      "fraud claim, unknown account/enquiry, serious status, complex dispute, " +
+      "conflicting data, legal threat, or severe distress.",
+  },
+  {
+    key: "no_credential_request",
+    name: "No Credential or Security Code Request (Fatal G2)",
+    instruction:
+      "Did the agent avoid requesting ANY of: OTP, password, PIN, CVV, UPI PIN, " +
+      "full card number, or any banking or app credentials at any point? " +
+      "Mark FAIL immediately if any such request was made, regardless of context or reason.",
+  },
+  {
+    key: "mandatory_closing_complete",
+    name: "Mandatory Closing Spoken in Full (F2)",
+    instruction:
+      "Was the mandatory closing spoken verbatim and in full before the call ended: " +
+      "'ग्रोस्कोर को अपना कीमती समय देने के लिए धन्यवाद। आपका दिन शुभ हो।'? " +
+      "Acceptable variants: IVR/voicemail detection closing, explicit stop/disconnect/not-interested request, " +
+      "or technical-failure callback closing (per the defined variants). " +
+      "Mark FAIL if the call ended without any closing, with a truncated closing, " +
+      "or if the agent kept speaking after the End Call trigger.",
+  },
+];
+
 /**
  * Returns the appropriate compliance checks for the given agent.
- * Inbound agents get the base 6 checks + 3 inbound-specific checks (9 total).
- * Outbound agents get just the base 6.
+ * Gro-Score agents get 5 fatal-item compliance checks.
+ * Inbound agents get the base 6 + 3 inbound-specific checks (9 total).
+ * All other outbound agents get the base 6 Gromo script checks.
  */
 export function getComplianceChecks(agentName?: string | null): ComplianceCheckDef[] {
+  if (isGroScoreAgent(agentName)) return GRO_SCORE_COMPLIANCE_CHECKS;
   if (isInboundAgent(agentName)) {
     return [...SCRIPT_COMPLIANCE_CHECKS, ...INBOUND_COMPLIANCE_CHECKS];
   }
@@ -321,9 +388,9 @@ const SYSTEM_PROMPT_TEMPLATE = `You are an expert QA auditor for AI-driven outbo
 
 You will be given a timestamped transcript. Speaker labels (Speaker A, Speaker B, etc.) may or may not be present:
 - If labels ARE present, they were produced by automatic diarization and are usually reliable but can occasionally be wrong. Determine which speaker is the AI based on the opening turns (the AI typically greets and identifies the company), then evaluate that speaker's behavior. If diarization looks broken, note it in the rationales.
-- If labels are NOT present, infer who is speaking from context Ã¢ÂÂ the AI is the caller.
+- If labels are NOT present, infer who is speaking from context  -  the AI is the caller.
 
-CRITICAL Ã¢ÂÂ NON-INTERACTION CALLS:
+CRITICAL  -  NON-INTERACTION CALLS:
 Before scoring anything, check whether an actual two-way conversation took place between the agent and the customer. A non-interaction call is one where:
 - The customer immediately put the call on hold and no real dialogue occurred
 - The call was silent or disconnected before the customer spoke substantively
@@ -331,9 +398,9 @@ Before scoring anything, check whether an actual two-way conversation took place
 
 If this is a non-interaction call:
 - Set overall_score to 1
-- Set every rubric dimension score to null with rationale "No customer interaction occurred Ã¢ÂÂ call was on hold or silent"
-- Set summary to clearly explain that no real conversation took place. ALWAYS include the exact phrase "no customer interaction" in the summary Ã¢ÂÂ the system uses this phrase to detect and exclude the call from agent quality metrics.
-- Set all script_compliance checks to passed: false with evidence "No customer interaction Ã¢ÂÂ agent had no opportunity to fulfill this check"
+- Set every rubric dimension score to null with rationale "No customer interaction occurred  -  call was on hold or silent"
+- Set summary to clearly explain that no real conversation took place. ALWAYS include the exact phrase "no customer interaction" in the summary  -  the system uses this phrase to detect and exclude the call from agent quality metrics.
+- Set all script_compliance checks to passed: false with evidence "No customer interaction  -  agent had no opportunity to fulfill this check"
 - Do NOT reward the agent for a polite greeting on a call where the customer never engaged
 
 AUDIT FOCUS:
@@ -346,7 +413,7 @@ SCORING:
 - If a dimension is genuinely not applicable (e.g. no objection was raised), score it null and say so in the rationale.
 
 Then provide:
-- overall_score (1-5; weight dimensions marked [PRIMARY FOCUS] more heavily, while compliance and product accuracy always carry weight regardless of focus)
+- {overall_score_block}
 - summary (2-3 sentences on how the call went)
 - strengths (what the AI did well)
 - what_was_lacking (concrete failures or missed opportunities)
@@ -355,8 +422,7 @@ Then provide:
 RUBRIC:
 {rubric}
 
-SCRIPT COMPLIANCE CHECKS:
-Beyond the rubric scores, evaluate whether the agent followed the mandatory Gromo call script. For each check below, determine pass (true) or fail (false), and provide a direct quote from the transcript (with timestamp if available) as evidence. If a check fails, quote the moment where it was expected but missing.
+{compliance_header_block}
 
 {compliance_block}
 
@@ -391,7 +457,7 @@ function formatRubric(
 
 function formatComplianceBlock(checks: ComplianceCheckDef[]): string {
   return checks
-    .map((c, i) => `${i + 1}. ${c.key} Ã¢ÂÂ "${c.name}": ${c.instruction}`)
+    .map((c, i) => `${i + 1}. ${c.key}  -  "${c.name}": ${c.instruction}`)
     .join("\n");
 }
 
@@ -424,32 +490,50 @@ export function buildSystemPrompt(opts: {
   // Get the right compliance checks for this agent type
   const checks = getComplianceChecks(opts.agentName);
   const inbound = isInboundAgent(opts.agentName);
+  const groScore = isGroScoreAgent(opts.agentName);
 
   // Build dynamic compliance JSON shape and optional call_reason field
   const complianceJsonShape = buildComplianceJsonShape(checks);
   const callReasonField = inbound
-    ? `,\n  "call_reason": "<brief category of what the GP was calling about Ã¢ÂÂ e.g. 'loan status query', 'app login issue', 'payout delay', 'callback request', 'product information', 'complaint'>"`
+    ? `,\n  "call_reason": "<brief category of what the GP was calling about - e.g. 'loan status query', 'app login issue', 'payout delay', 'callback request', 'product information', 'complaint'>"`
     : "";
+
+  // Determine overall_score instruction based on rubric total max.
+  // For Gro-Score (total max = 100): overall is the arithmetic sum of dimension scores.
+  // For all other rubrics: overall is a holistic 1-5 rating.
+  const rubricTotalMax = rubric.reduce((sum, d) => sum + d.max, 0);
+  const overall_score_block = rubricTotalMax > 10
+    ? `overall_score (0-${rubricTotalMax}): The EXACT arithmetic sum of all individual dimension scores. Add up each scored dimension (treat null as 0). Do not map to a different scale.`
+    : `overall_score (1-5; weight dimensions marked [PRIMARY FOCUS] more heavily, while compliance and product accuracy always carry weight regardless of focus)`;
+
+  // Compliance section header differs by agent type.
+  const compliance_header_block = groScore
+    ? `GRO-SCORE FATAL COMPLIANCE CHECKS:\nBeyond the rubric scores, evaluate these binary fatal-item checks. For each, determine pass (true) or fail (false) and quote evidence from the transcript (with timestamp if available). A FAIL on any fatal check must be noted prominently in what_was_lacking.`
+    : `SCRIPT COMPLIANCE CHECKS:\nBeyond the rubric scores, evaluate whether the agent followed the mandatory Gromo call script. For each check below, determine pass (true) or fail (false), and provide a direct quote from the transcript (with timestamp if available) as evidence. If a check fails, quote the moment where it was expected but missing.`;
 
   let prompt = SYSTEM_PROMPT_TEMPLATE
     .replace("{focus_block}", focus_block)
     .replace("{strictness_block}", strictness_block)
     .replace("{rubric}", formatRubric(rubric, p.emphasis_keys))
+    .replace("{overall_score_block}", overall_score_block)
+    .replace("{compliance_header_block}", compliance_header_block)
     .replace("{compliance_block}", formatComplianceBlock(checks))
     .replace("{compliance_json_shape}", complianceJsonShape)
     .replace("{call_reason_field}", callReasonField);
 
-
-  // Do not penalize closing when the customer hung up first (applies to all agents)
-  prompt +=
-      `\n\nCALL DISCONNECT POLICY:\n` +
+  // Inbound-specific: do not penalize closing when the customer hung up first
+  if (inbound) {
+    prompt +=
+      `\n\nINBOUND CALL DISCONNECT POLICY:\n` +
       `The transcript may be prefixed with a "CALL METADATA:" block that includes a "Disconnect Reason:" line.\n` +
       `If the disconnect reason contains "disconnected by user" or otherwise indicates the customer/user ended the call:\n` +
-      `- Do NOT penalize the agent for an incomplete or missing closing â the customer chose to hang up before the agent could close.\n` +
-      `- Score the "closing" rubric dimension as null with rationale: "Customer disconnected the call â agent had no opportunity to complete closing. Score withheld per policy."\n` +
-      `- Mark the "closing_assistance" compliance check as passed: true with evidence: "Not applicable â customer disconnected the call before the agent could close."\n` +
+      `- Do NOT penalize the agent for an incomplete or missing closing - the customer chose to hang up before the agent could close.\n` +
+      `- Score the "closing" rubric dimension as null with rationale: "Customer disconnected the call - agent had no opportunity to complete closing. Score withheld per policy."\n` +
+      `- Mark the "closing_assistance" compliance check as passed: true with evidence: "Not applicable - customer disconnected the call before the agent could close."\n` +
       `- For "followed_inbound_script", do not fail step (6) professional closing if the disconnect was user-initiated.\n` +
       `If no disconnect reason is mentioned, or the reason is anything other than user-initiated, evaluate closing normally.`;
+  }
+
   if (opts.knowledgeBase?.trim()) {
     const kb = opts.knowledgeBase.trim().slice(0, 60000);
     prompt +=
@@ -465,4 +549,4 @@ export function buildSystemPrompt(opts: {
   }
 
   return prompt;
-    }
+}
