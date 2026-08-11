@@ -75,6 +75,9 @@ export default function BatchForm({
       const callCol = detectCallIdColumn(headers);
       const mobCol = detectMobileColumn(headers);
       const discCol = detectDisconnectReasonColumn(headers);
+        // Detect call_status column — only Karta data has it; Convozen and others may not.
+        const callStatusKey = Object.keys(rows[0] ?? {}).find(k => k.toLowerCase().replace(/[^a-z0-9]/g, '') === 'callstatus') ?? null;
+
 
       const seen = new Set<string>();
       const extracted: ParsedRow[] = [];
@@ -82,7 +85,7 @@ export default function BatchForm({
       for (const r of rows) {
         const v = String(r[col] ?? "").trim();
         if (!/^https?:\/\//i.test(v) || seen.has(v)) continue;
-        if (String(r["call_status"] ?? "").toLowerCase() !== "ended") {
+        if (callStatusKey && String(r[callStatusKey] ?? "").toLowerCase() !== "ended") {
           skipped++;
           continue;
         }
@@ -95,7 +98,7 @@ export default function BatchForm({
         });
       }
       if (extracted.length === 0) {
-        throw new Error(`Column "${col}" has no valid http(s) URLs with call_status=ended.`);
+        throw new Error(`Column "${col}" has no valid http(s) URLs. If using Karta data, ensure call_status=ended rows exist.`);
       }
       if (extracted.length > MAX_URLS) {
         throw new Error(
