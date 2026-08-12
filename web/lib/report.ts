@@ -453,55 +453,6 @@ function renderQueryReasons(rows: ReportRow[]): string {
     '<tbody>' + reasonRows + '</tbody></table>';
 }
 
-// ---- Inbound-specific sections ----------------------------------------------
-
-function renderQueryReasons(rows: ReportRow[]): string {
-  const reasons = new Map<string, number>();
-  for (const row of rows) {
-    const reason = extractCallReason(row.compliance_json);
-    const key = reason.toLowerCase().trim();
-    if (key === "unknown" || key === "") continue;
-    // Normalize slightly
-    const display = reason.charAt(0).toUpperCase() + reason.slice(1);
-    reasons.set(display, (reasons.get(display) ?? 0) + 1);
-  }
-
-  if (reasons.size === 0) return "";
-
-  const sorted = Array.from(reasons.entries()).sort((a, b) => b[1] - a[1]);
-  const total = sorted.reduce((s, [, c]) => s + c, 0);
-
-  const reasonRows = sorted.map(([reason, count]) => {
-    const p = total > 0 ? Math.round((count / total) * 100) : 0;
-    return `
-    <tr style="border-bottom:1px solid #e5e7eb;">
-      <td style="padding:9px 12px;">${reason}</td>
-      <td style="padding:9px 12px;text-align:center;font-weight:600;">${count}</td>
-      <td style="padding:9px 12px;">
-        <div style="background:#e5e7eb;border-radius:4px;height:10px;width:100%;max-width:160px;">
-          <div style="background:#6366f1;border-radius:4px;height:10px;width:${p}%;"></div>
-        </div>
-      </td>
-      <td style="padding:9px 12px;text-align:center;color:#6b7280;">${p}%</td>
-    </tr>`;
-  }).join("");
-
-  return `
-  <h2 style="color:#111;font-size:16px;margin:28px 0 10px 0;font-weight:700;">📊 Major Query Reasons</h2>
-  <p style="color:#555;font-size:13px;margin:0 0 10px 0;">Why GPs called today (${total} calls with identified reasons)</p>
-  <table style="width:100%;border-collapse:collapse;font-size:13px;background:#fff;border:1px solid #e5e7eb;">
-    <thead>
-      <tr style="background:#f3f4f6;text-align:left;">
-        <th style="padding:9px 12px;">Query Reason</th>
-        <th style="padding:9px 12px;text-align:center;">Count</th>
-        <th style="padding:9px 12px;">Distribution</th>
-        <th style="padding:9px 12px;text-align:center;">%</th>
-      </tr>
-    </thead>
-    <tbody>${reasonRows}</tbody>
-  </table>`;
-}
-
 function renderInboundComplianceSection(rows: ReportRow[]): string {
   const allChecks = [...SCRIPT_COMPLIANCE_CHECKS, ...INBOUND_COMPLIANCE_CHECKS];
   const withData = rows.filter(r => r.compliance_json && r.compliance_json !== "{}");
