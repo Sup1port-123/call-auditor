@@ -107,7 +107,7 @@ function splitToPoints(text: string | null): string[] {
   if (!text) return [];
   return text
     .split(/\.\s+|\n+|;\s*/)
-    .map(s => s.trim().replace(/^[-\u2022*\d]+[.)\s*/, "").trim())
+    .map(s => s.trim().replace(/^[-\u2022*\d]+[.)\s]*/, "").trim())
     .filter(s => s.length >= 12 && s.length <= 200);
 }
 
