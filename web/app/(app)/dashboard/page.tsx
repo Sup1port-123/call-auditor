@@ -14,10 +14,10 @@ const FILTER_CAP = 2000;
 const DISPLAY_LIMIT = 50;
 
 const LIGHT_COLUMNS =
-  "id, timestamp, audited_at, target, llm_provider, overall_score, duration_seconds, review_status";
+  "id, timestamp, audited_at, target, preset, llm_provider, overall_score, duration_seconds, review_status, call_id, mobile_number";
 
 const FULL_COLUMNS =
-  "id, timestamp, audited_at, target, llm_provider, overall_score, duration_seconds, review_status, summary, scores_json, strengths, what_was_lacking, recommendations_json, transcript";
+  "id, timestamp, audited_at, target, preset, llm_provider, overall_score, duration_seconds, review_status, call_id, mobile_number, summary, scores_json, strengths, what_was_lacking, recommendations_json, transcript";
 
 export default async function DashboardPage({
   searchParams,
