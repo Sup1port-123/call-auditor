@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { motion } from "motion/react";
 import { formatDuration } from "@/lib/audit-filters";
@@ -73,8 +74,11 @@ export default function AuditsDataTable({ rows }: { rows: DataRow[] }) {
                   >
                     <div className="font-medium text-[var(--ink)]">Recording</div>
                     {row.call_id && (
-                      <div className="text-zinc-400 text-[11px] font-mono mt-0.5">
-                        ID: {row.call_id}
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <span className="text-zinc-400 text-[11px] font-mono">
+                          ID: {row.call_id}
+                        </span>
+                        <CopyButton value={row.call_id} />
                       </div>
                     )}
                     {row.summary && (
@@ -133,6 +137,38 @@ export default function AuditsDataTable({ rows }: { rows: DataRow[] }) {
         </tbody>
       </table>
     </motion.div>
+  );
+}
+
+function CopyButton({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    navigator.clipboard.writeText(value).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      title={copied ? "Copied!" : "Copy Call ID"}
+      className="opacity-0 group-hover:opacity-100 transition-all text-zinc-400 hover:text-zinc-700 p-0.5 rounded"
+    >
+      {copied ? (
+        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-500">
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+      ) : (
+        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+        </svg>
+      )}
+    </button>
   );
 }
 
