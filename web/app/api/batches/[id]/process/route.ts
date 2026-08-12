@@ -6,11 +6,13 @@ import { finalizeAudit } from "@/lib/finalize";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-// Per call: submit this many queued rows OR finalize this many
-// transcribing rows. The batch view loops this endpoint until done, so
-// each call stays well under the serverless timeout.
-const SUBMIT_CHUNK = 8;
-const FINALIZE_CHUNK = 4;
+// Per cycle: submit this many queued rows in parallel.
+// Transcription submission is a lightweight HTTP call, so we can push many at once.
+const SUBMIT_CHUNK = 20;
+
+// Per cycle: finalize this many transcribing rows in parallel.
+// Each LLM scoring call takes ~5-15s; running 8 in parallel is safe within 60s timeout.
+const FINALIZE_CHUNK = 8;
 
 function webhookBase(req: Request): string {
   // Prefer the stable production domain — deployment-specific URLs sit
@@ -38,7 +40,7 @@ export async function POST(
       );
     }
 
-    // Phase 1: submit queued rows to AssemblyAI.
+    // Phase 1: submit queued rows to transcription service.
     const { data: queued } = await supabase
       .from("audits")
       .select("id, target")
@@ -53,15 +55,29 @@ export async function POST(
       await Promise.all(
         queued.map(async (a) => {
           try {
-            const { transcriptId } = await submitTranscription({
+            const { transcriptId, transcript, durationSeconds } = await submitTranscription({
               audioUrl: a.target,
               webhookUrl,
               auditId: a.id,
             });
+            // For sync providers (Deepgram, Sarvam, Whisper), the transcript is
+            // returned immediately — save it now so Phase 2 / finalize can score it.
+            const updateFields: Record<string, unknown> = {
+              status: "transcribing",
+              transcript_id: transcriptId,
+            };
+            if (transcript !== undefined) {
+              updateFields.transcript = transcript;
+              if (durationSeconds != null) updateFields.duration_seconds = durationSeconds;
+            }
             await supabase
               .from("audits")
-              .update({ status: "transcribing", transcript_id: transcriptId })
+              .update(updateFields)
               .eq("id", a.id);
+            // For sync providers, kick off scoring immediately (non-blocking).
+            if (transcript !== undefined) {
+              finalizeAudit(a.id).catch(console.error);
+            }
             submitted++;
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
