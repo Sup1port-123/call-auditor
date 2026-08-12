@@ -1,18 +1,11 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
+import { motion } from "motion/react";
 import { formatDuration } from "@/lib/audit-filters";
 import { istDateParts } from "@/lib/datetime";
-import {
-  parseScores,
-  parseRecommendations,
-  type DimensionScore,
-  type ReviewStatus,
-} from "@/lib/types/audit";
-import ReviewStatusControl, {
-  ReviewBadge,
-} from "../audits/review-status";
+import type { ReviewStatus } from "@/lib/types/audit";
+import ReviewStatusControl from "../audits/review-status";
 
 export type DataRow = {
   id: string;
@@ -22,6 +15,10 @@ export type DataRow = {
   duration_seconds: number | null;
   overall_score: number | null;
   review_status?: ReviewStatus | null;
+  preset?: string | null;
+  llm_provider?: string | null;
+  call_id?: string | null;
+  mobile_number?: string | null;
   summary?: string | null;
   scores_json?: string | null;
   strengths?: string | null;
@@ -30,256 +27,112 @@ export type DataRow = {
   transcript?: string | null;
 };
 
-// Always IST, regardless of the viewer's machine timezone.
-const fmt = istDateParts;
-
-const COL_COUNT = 6;
-
 export default function AuditsDataTable({ rows }: { rows: DataRow[] }) {
-  const [openId, setOpenId] = useState<string | null>(null);
-
   return (
-    <div className="rounded-3xl bg-[var(--paper)] overflow-x-auto">
-      <table className="w-full text-sm min-w-[760px]">
+    <motion.div
+      initial="hidden"
+      animate="visible"
+      variants={{ visible: { transition: { staggerChildren: 0.03 } } }}
+      className="rounded-3xl bg-[var(--paper)] overflow-x-auto"
+    >
+      <table className="w-full text-sm min-w-[800px]">
         <thead>
           <tr className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">
-            <Th className="w-8" />
+            <Th>When (IST)</Th>
             <Th>Recording</Th>
-            <Th>Uploaded (IST)</Th>
-            <Th>Audited (IST)</Th>
-            <Th className="text-right">Duration</Th>
+            <Th>Duration</Th>
+            <Th>Preset</Th>
+            <Th>LLM</Th>
+            <Th>Review</Th>
             <Th className="text-right pr-6">Score</Th>
           </tr>
         </thead>
         <tbody>
           {rows.map((row, i) => {
-            const up = fmt(row.timestamp);
-            const au = fmt(row.audited_at ?? row.timestamp);
+            const { date, time } = istDateParts(row.timestamp);
             const hasDur =
               row.duration_seconds != null && row.duration_seconds >= 0;
-            const open = openId === row.id;
+            const isUrl = /^https?:\/\//.test(row.target);
             return (
-              <FragmentRow
+              <motion.tr
                 key={row.id}
-                row={row}
-                first={i === 0}
-                open={open}
-                onToggle={() => setOpenId(open ? null : row.id)}
-                up={up}
-                au={au}
-                hasDur={hasDur}
-              />
+                variants={{ hidden: { opacity: 0, y: 6 }, visible: { opacity: 1, y: 0 } }}
+                transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+                className={`group ${i !== 0 ? "border-t border-white" : ""}`}
+              >
+                <Td className="text-zinc-500 whitespace-nowrap">
+                  <Link href={`/audits/${row.id}`} className="block py-1">
+                    <div>{date}</div>
+                    <div className="text-zinc-400 text-[11px] mt-0.5">{time}</div>
+                  </Link>
+                </Td>
+                <Td>
+                  <Link
+                    href={`/audits/${row.id}`}
+                    className="block py-1 group-hover:text-black transition"
+                  >
+                    <div className="font-medium text-[var(--ink)]">Recording</div>
+                    {row.call_id && (
+                      <div className="text-zinc-400 text-[11px] font-mono mt-0.5">
+                        ID: {row.call_id}
+                      </div>
+                    )}
+                    {row.summary && (
+                      <div className="text-zinc-500 text-xs truncate max-w-sm mt-0.5">
+                        {row.summary}
+                      </div>
+                    )}
+                  </Link>
+                  {isUrl && (
+                    <audio
+                      controls
+                      className="w-full mt-1 max-w-xs"
+                      src={row.target}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  )}
+                </Td>
+                <Td className="text-zinc-600 whitespace-nowrap tabular-nums">
+                  <Link href={`/audits/${row.id}`} className="block py-1">
+                    {hasDur ? formatDuration(row.duration_seconds) : "—"}
+                  </Link>
+                </Td>
+                <Td className="text-zinc-600">
+                  <Link href={`/audits/${row.id}`} className="block py-1">
+                    {row.preset ? (
+                      <span className="rounded-full bg-white px-3 py-1 text-[11px] font-medium border border-zinc-200">
+                        {row.preset}
+                      </span>
+                    ) : (
+                      "—"
+                    )}
+                  </Link>
+                </Td>
+                <Td className="text-zinc-600">
+                  <Link href={`/audits/${row.id}`} className="block py-1">
+                    {row.llm_provider ? (
+                      <span className="rounded-full bg-white px-3 py-1 text-[11px] font-medium border border-zinc-200">
+                        {row.llm_provider}
+                      </span>
+                    ) : (
+                      "—"
+                    )}
+                  </Link>
+                </Td>
+                <Td>
+                  <ReviewStatusControl id={row.id} status={row.review_status} />
+                </Td>
+                <Td className="text-right pr-6">
+                  <Link href={`/audits/${row.id}`} className="block py-1">
+                    <Score score={row.overall_score} />
+                  </Link>
+                </Td>
+              </motion.tr>
             );
           })}
         </tbody>
       </table>
-    </div>
-  );
-}
-
-function FragmentRow({
-  row,
-  first,
-  open,
-  onToggle,
-  up,
-  au,
-  hasDur,
-}: {
-  row: DataRow;
-  first: boolean;
-  open: boolean;
-  onToggle: () => void;
-  up: { date: string; time: string };
-  au: { date: string; time: string };
-  hasDur: boolean;
-}) {
-  return (
-    <>
-      <tr
-        onClick={onToggle}
-        className={`group cursor-pointer hover:bg-white/60 transition ${
-          first ? "" : "border-t border-white"
-        } ${open ? "bg-white/60" : ""}`}
-      >
-        <Td className="text-zinc-400 text-center select-none">
-          <span
-            className={`inline-block transition-transform ${
-              open ? "rotate-90" : ""
-            }`}
-          >
-            ▸
-          </span>
-        </Td>
-        <Td>
-          <div className="font-medium truncate max-w-[320px] text-[var(--ink)]">
-            {row.target}
-          </div>
-          <div className="mt-1">
-            <ReviewBadge status={row.review_status} />
-          </div>
-        </Td>
-        <Td className="text-zinc-500 whitespace-nowrap">
-          <div>{up.date}</div>
-          <div className="text-zinc-400 text-[11px] mt-0.5">{up.time}</div>
-        </Td>
-        <Td className="text-zinc-500 whitespace-nowrap">
-          <div>{au.date}</div>
-          <div className="text-zinc-400 text-[11px] mt-0.5">{au.time}</div>
-        </Td>
-        <Td className="text-right tabular-nums whitespace-nowrap text-zinc-600">
-          {hasDur ? formatDuration(row.duration_seconds) : "—"}
-        </Td>
-        <Td className="text-right pr-6">
-          <ScorePill score={row.overall_score} />
-        </Td>
-      </tr>
-      {open && (
-        <tr className="border-t border-white">
-          <td colSpan={COL_COUNT} className="px-6 py-5 bg-white/70">
-            <AuditDetail row={row} />
-          </td>
-        </tr>
-      )}
-    </>
-  );
-}
-
-function AuditDetail({ row }: { row: DataRow }) {
-  const scores = parseScores(row.scores_json ?? null);
-  const dims = Object.entries(scores);
-  const recs = parseRecommendations(row.recommendations_json ?? null);
-
-  return (
-    <div className="space-y-5 max-w-4xl">
-      <Block title="Review">
-        <ReviewStatusControl id={row.id} status={row.review_status} refresh />
-      </Block>
-
-      {row.summary && (
-        <Block title="Summary">
-          <p className="text-sm text-zinc-700 leading-relaxed">{row.summary}</p>
-        </Block>
-      )}
-
-      {dims.length > 0 && (
-        <Block title="Dimensions">
-          <div className="space-y-3">
-            {dims.map(([key, val]) => (
-              <Dimension key={key} dimKey={key} val={val} />
-            ))}
-          </div>
-        </Block>
-      )}
-
-      {row.strengths && (
-        <Block title="Strengths" tone="text-emerald-700">
-          <p className="text-sm text-zinc-700 leading-relaxed whitespace-pre-line">
-            {row.strengths}
-          </p>
-        </Block>
-      )}
-
-      {row.what_was_lacking && (
-        <Block title="What was lacking" tone="text-rose-700">
-          <p className="text-sm text-zinc-700 leading-relaxed whitespace-pre-line">
-            {row.what_was_lacking}
-          </p>
-        </Block>
-      )}
-
-      {recs.length > 0 && (
-        <Block title="Recommendations">
-          <ol className="list-decimal pl-5 space-y-1">
-            {recs.map((r, i) => (
-              <li key={i} className="text-sm text-zinc-700 leading-relaxed">
-                {r}
-              </li>
-            ))}
-          </ol>
-        </Block>
-      )}
-
-      {row.transcript && (
-        <Block title="Transcript">
-          <pre className="text-xs text-zinc-600 leading-relaxed whitespace-pre-wrap font-mono max-h-72 overflow-y-auto rounded-xl bg-[var(--paper)] p-4">
-            {row.transcript}
-          </pre>
-        </Block>
-      )}
-
-      <Link
-        href={`/audits/${row.id}`}
-        className="inline-block text-sm font-medium text-[var(--sky-700)] hover:text-[var(--ink)] transition"
-      >
-        Open full audit &rarr;
-      </Link>
-    </div>
-  );
-}
-
-function Dimension({
-  dimKey,
-  val,
-}: {
-  dimKey: string;
-  val: DimensionScore | number;
-}) {
-  const isObj = typeof val !== "number";
-  const score = isObj ? val.score : val;
-  const rationale = isObj ? val.rationale : null;
-  const max = isObj && typeof val.max === "number" ? val.max : 5;
-  const label = isObj && val.name ? val.name : dimKey.replace(/_/g, " ");
-  const frac = score == null || max <= 0 ? 0 : score / max;
-  const tone =
-    score == null
-      ? "text-zinc-400"
-      : frac >= 0.7
-      ? "text-emerald-700"
-      : frac >= 0.45
-      ? "text-amber-700"
-      : "text-rose-700";
-
-  return (
-    <div>
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="text-sm font-medium capitalize text-[var(--ink)]">
-          {label}
-        </span>
-        <span className={`text-sm font-semibold tabular-nums ${tone}`}>
-          {score ?? "—"}
-          <span className="text-zinc-400 font-normal"> / {max}</span>
-        </span>
-      </div>
-      {rationale && (
-        <p className="text-xs text-zinc-500 mt-0.5 leading-relaxed">
-          {rationale}
-        </p>
-      )}
-    </div>
-  );
-}
-
-function Block({
-  title,
-  tone,
-  children,
-}: {
-  title: string;
-  tone?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <div
-        className={`text-[11px] uppercase tracking-[0.2em] font-semibold mb-2 ${
-          tone ?? "text-zinc-500"
-        }`}
-      >
-        {title}
-      </div>
-      {children}
-    </div>
+    </motion.div>
   );
 }
 
@@ -305,25 +158,21 @@ function Td({
   className?: string;
 }) {
   return (
-    <td className={`px-5 py-3 align-middle ${className ?? ""}`}>{children}</td>
+    <td className={`px-5 py-2 align-middle ${className ?? ""}`}>{children}</td>
   );
 }
 
-function ScorePill({ score }: { score: number | null }) {
-  if (score == null) {
-    return <span className="text-xs text-zinc-400">unscored</span>;
-  }
+function Score({ score }: { score: number | null }) {
+  if (score == null) return <span className="text-xs text-zinc-400">—</span>;
   const pct = Math.round(score * 20);
   const tone =
     pct >= 70
-      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+      ? "text-emerald-600"
       : pct >= 50
-      ? "bg-amber-50 text-amber-700 border-amber-200"
-      : "bg-rose-50 text-rose-700 border-rose-200";
+      ? "text-amber-600"
+      : "text-rose-600";
   return (
-    <span
-      className={`rounded-full border px-3 py-1.5 text-xs font-semibold tabular-nums ${tone}`}
-    >
+    <span className={`font-display font-extrabold tabular-nums text-2xl ${tone}`}>
       {pct}%
     </span>
   );
