@@ -501,8 +501,9 @@ export function buildSystemPrompt(opts: {
   // Determine overall_score instruction based on rubric total max.
   // For Gro-Score (total max = 100): overall is the arithmetic sum of dimension scores.
   // For all other rubrics: overall is a holistic 1-5 rating.
+  const maxDimMax = rubric.reduce((mx, d) => Math.max(mx, d.max), 0);
   const rubricTotalMax = rubric.reduce((sum, d) => sum + d.max, 0);
-  const overall_score_block = rubricTotalMax > 10
+  const overall_score_block = maxDimMax > DEFAULT_MAX
     ? `overall_score (0-${rubricTotalMax}): The EXACT arithmetic sum of all individual dimension scores. Add up each scored dimension (treat null as 0). Do not map to a different scale.`
     : `overall_score (1-5; weight dimensions marked [PRIMARY FOCUS] more heavily, while compliance and product accuracy always carry weight regardless of focus)`;
 
