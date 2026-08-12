@@ -144,7 +144,7 @@ function renderInsightBullets(
 ): string {
   const insights = aggregateInsights(rows, getText);
   if (insights.length === 0) return "";
-  const items = insights.map(function(ins: { text: string; count: number; ids: string[] }) {
+  const items = insights.map(function(ins: { text: string; count: number; ids: InsightId[] }) {
     return '<li style="margin:10px 0;line-height:1.6;">' +
       '<span style="color:' + bulletColor + ';font-weight:600;">&#9658;</span>' +
       '<span style="color:#111;"> ' + ins.text + '</span>' +
@@ -176,7 +176,7 @@ function renderTransferReasons(rows: ReportRow[]): string {
   }
   if (map.size === 0) return "";
   const sorted = Array.from(map.values()).sort((a, b) => b.ids.length - a.ids.length).slice(0, 5);
-  const items = sorted.map(function(item: { displayText: string; ids: string[] }) {
+  const items = sorted.map(function(item: { displayText: string; ids: InsightId[] }) {
     return '<li style="margin:10px 0;line-height:1.6;">' +
       '<span style="color:#f59e0b;font-weight:600;">&#9658;</span>' +
       '<span style="color:#111;"> ' + item.displayText + '</span>' +
@@ -435,7 +435,7 @@ function renderQueryReasons(rows: ReportRow[]): string {
   if (reasons.size === 0) return "";
   const sorted = Array.from(reasons.entries()).sort((a, b) => b[1].count - a[1].count).slice(0, 5);
   const total = sorted.reduce((s, e) => s + e[1].count, 0);
-  const reasonRows = sorted.map(function(e: [string, { count: number; ids: string[] }]) {
+  const reasonRows = sorted.map(function(e: [string, { count: number; ids: InsightId[] }]) {
     const reason = e[0]; const count = e[1].count; const ids = e[1].ids;
     const p = total > 0 ? Math.round((count / total) * 100) : 0;
     const idLinks = ids.slice(0, 5).map(auditLink).join(', ');
