@@ -4,6 +4,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import {
   buildSystemPrompt,
   RUBRIC_DIMENSIONS,
+  DEFAULT_MAX,
   getComplianceChecks,
   isInboundAgent,
   type RubricDimension,
@@ -297,7 +298,16 @@ export async function scoreTranscript(opts: {
       else if (provider === "anthropic" && process.env.ANTHROPIC_API_KEY)
         result = await scoreWithClaude(systemPrompt, opts.transcript);
       if (result) {
-        return { ...result, scores: enrichScores(result.scores, rubric), llm_provider: provider, llm_fallback_reason: fallbackReason };
+        const maxDimMax = rubric.reduce((mx: number, d: RubricDimension) => Math.max(mx, d.max), 0);
+          const rubricTotalMax = rubric.reduce((s: number, d: RubricDimension) => s + d.max, 0);
+          // Normalize overall_score to 0-5 scale.
+          // If LLM was asked for a sum-based score (custom rubric with dim max > 5),
+          // convert it. If holistic 1-5, clamp to valid range.
+          const rawOverall = result.overall_score ?? 0;
+          const normalizedOverall = (maxDimMax > DEFAULT_MAX && rawOverall > 5 && rubricTotalMax > 0)
+            ? Math.round(((rawOverall / rubricTotalMax) * 5) * 10) / 10
+            : Math.min(5, Math.max(0, rawOverall));
+          return { ...result, scores: enrichScores(result.scores, rubric), overall_score: normalizedOverall, llm_provider: provider, llm_fallback_reason: fallbackReason };
       }
     } catch (err) {
       fallbackReason = `${provider} failed: ${err instanceof Error ? err.message : String(err)}`;
