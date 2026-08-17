@@ -6,6 +6,7 @@ import AnimatedCounter from "@/components/animated-counter";
 import DashboardFilters from "./dashboard-filters";
 import AuditsDataTable, { type DataRow } from "./audits-data-table";
 import { formatDuration, type RawParams } from "@/lib/audit-filters";
+import AuditStatsDashboard from "@/components/AuditStatsDashboard";
 
 // Exported so page.tsx (server component) can use the same type.
 export type LeaderboardEntry = {
@@ -231,6 +232,25 @@ export default function DashboardClient({
               );
             })}
           </div>
+        </motion.section>
+      )}
+
+      {/* Audit Statistics — date-range breakdown with per-agent table */}
+      {!filtered && (
+        <motion.section
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: "-80px" }}
+          transition={{ duration: 0.7 }}
+          className="mt-20"
+        >
+          <div className="text-xs uppercase tracking-[0.25em] text-[var(--sky-700)] font-semibold mb-3">
+            Analytics
+          </div>
+          <h2 className="font-display text-3xl md:text-4xl font-extrabold leading-tight mb-8 max-w-2xl">
+            Audit Statistics
+          </h2>
+          <AuditStatsDashboard />
         </motion.section>
       )}
 
