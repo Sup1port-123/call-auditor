@@ -8,10 +8,10 @@ export const maxDuration = 30;
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const from = searchParams.get("from") ?? "2026-06-29";
-  const to   = searchParams.get("to")   ?? new Date().toISOString().slice(0, 10);
-  const fmt  = searchParams.get("format") ?? "json";
+  const to = searchParams.get("to") ?? new Date().toISOString().slice(0, 10);
+  const fmt = searchParams.get("format") ?? "json";
   const fromISO = `${from}T00:00:00+05:30`;
-  const toISO   = `${to}T23:59:59+05:30`;
+  const toISO = `${to}T23:59:59+05:30`;
   const supabase = createAdminClient();
   const { data: audits, error } = await supabase
     .from("audits")
@@ -21,12 +21,12 @@ export async function GET(req: Request) {
     .order("timestamp", { ascending: true });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   const rows = audits ?? [];
-  const total     = rows.length;
+  const total = rows.length;
   const completed = rows.filter((r) => r.status === "completed").length;
-  const failed    = rows.filter((r) => r.status === "failed").length;
-  const inProg    = rows.filter((r) => ["in_progress","transcribing","scoring"].includes(r.status ?? "")).length;
-  const scored    = rows.filter((r) => r.overall_score != null);
-  const avgScore  = scored.length ? +(scored.reduce((s, r) => s + (r.overall_score ?? 0), 0) / scored.length).toFixed(2) : null;
+  const failed = rows.filter((r) => r.status === "failed").length;
+  const inProg = rows.filter((r) => ["in_progress","transcribing","scoring"].includes(r.status ?? "")).length;
+  const scored = rows.filter((r) => r.overall_score != null);
+  const avgScore = scored.length ? +(scored.reduce((s, r) => s + (r.overall_score ?? 0), 0) / scored.length).toFixed(2) : null;
   type AgentRow = { name: string; total: number; completed: number; avgScore: number | null };
   const byAgent = new Map<string, AgentRow>();
   for (const r of rows) {
@@ -37,8 +37,8 @@ export async function GET(req: Request) {
     byAgent.set(n, ex);
   }
   for (const [key, row] of byAgent) {
-    const as = rows.filter((r) => ((r.agents as { name?: string } | null)?.name ?? r.agent_id ?? "Unknown") === key && r.overall_score != null);
-    row.avgScore = as.length ? +(as.reduce((s, r) => s + (r.overall_score ?? 0), 0) / as.length).toFixed(2) : null;
+    const agentRows = rows.filter((r) => ((r.agents as { name?: string } | null)?.name ?? r.agent_id ?? "Unknown") === key && r.overall_score != null);
+    row.avgScore = agentRows.length ? +(agentRows.reduce((s, r) => s + (r.overall_score ?? 0), 0) / agentRows.length).toFixed(2) : null;
   }
   const byDay = new Map<string, { total: number; completed: number }>();
   for (const r of rows) {
@@ -67,7 +67,8 @@ export async function GET(req: Request) {
     ["Date","Total","Completed"],
     ...[...byDay.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([d,v])=>[d,v.total,v.completed]),
   ]), "By Day");
-  const buf: Uint8Array = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const buf = new Uint8Array(XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as any);
   return new Response(buf, {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
