@@ -67,8 +67,8 @@ export async function GET(req: Request) {
     ["Date","Total","Completed"],
     ...[...byDay.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([d,v])=>[d,v.total,v.completed]),
   ]), "By Day");
-  const buf: Buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
-  return new NextResponse(buf, {
+  const buf: Uint8Array = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+  return new Response(buf, {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       "Content-Disposition": `attachment; filename="otis-stats-${from}-to-${to}.xlsx"`,
