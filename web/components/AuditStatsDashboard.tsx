@@ -193,6 +193,15 @@ export default function AuditStatsDashboard() {
                     <div className="mt-1 text-[10px]">All {data.total.toLocaleString("en-IN")} submitted calls billed by AssemblyAI</div>
                   </div>
                 </div>
+                {/* Calculation breakdown */}
+                <div className="mt-3 pt-3 border-t border-amber-100 text-[11px] text-amber-500 leading-5">
+                  <div className="font-semibold text-amber-600 mb-1">How is this calculated?</div>
+                  <div className="flex flex-col sm:flex-row gap-x-6 gap-y-0.5 text-amber-400">
+                    <div>① $0.17/hr ÷ 60 = $0.00283/min → <span className="font-semibold text-amber-500">₹0.24/min</span></div>
+                    <div>② {data.total.toLocaleString("en-IN")} calls × 3.5 min = <span className="font-semibold text-amber-500">{Math.round(audioMin).toLocaleString("en-IN")} min</span> audio</div>
+                    <div>③ {Math.round(audioMin).toLocaleString("en-IN")} min × ₹0.24 = <span className="font-semibold text-amber-500">₹{Math.round(inr).toLocaleString("en-IN")}</span></div>
+                  </div>
+                </div>
               </div>
             );
           })()}
