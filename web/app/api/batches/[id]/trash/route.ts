@@ -15,7 +15,7 @@ type Action = "trash" | "restore" | "destroy";
 
 export async function POST(
   req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   // 1. Auth: get the current user from the request session
   const supabase = await createClient();
@@ -49,7 +49,7 @@ export async function POST(
     );
   }
 
-  const batchId = params.id;
+  const { id: batchId } = await params;
   const admin = createAdminClient();
 
   // 4. Execute
