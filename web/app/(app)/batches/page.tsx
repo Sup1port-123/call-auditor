@@ -26,7 +26,8 @@ export default async function BatchesPage() {
     supabase
       .from("audits")
       .select("batch_id, status, overall_score")
-      .not("batch_id", "is", null),
+      .not("batch_id", "is", null)
+      .range(0, 9999),
     supabase.from("agents").select("id, name"),
     supabase.auth.getUser(),
   ]);
