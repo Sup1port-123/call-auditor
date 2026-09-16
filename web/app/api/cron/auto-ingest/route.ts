@@ -1,6 +1,14 @@
+// web/app/api/cron/auto-ingest/route.ts
+//
+// Daily cron: fetch yesterday's Karta calls and score them using
+// Karta's pre-generated conversation summaries (no AssemblyAI needed).
+//
+// Falls back to queuing calls with recording URLs if a call has no
+// summary — those will remain "queued" until AssemblyAI is available.
+
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { newBatchId } from "@/lib/types/batch";
+import { finalizeAudit } from "@/lib/finalize";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -19,6 +27,14 @@ type KartaCall = {
   caller_number?: string;
   phone_number?: string;
   customer_number?: string;
+  // Summary fields (Karta provides these for ended calls)
+  summary?: string;
+  conversation_summary?: string;
+  call_summary?: string;
+  disconnectedBy?: string;
+  disconnected_by?: string;
+  call_start_stamp?: string;
+  call_initiated_stamp?: string;
   [key: string]: unknown;
 };
 
@@ -72,13 +88,24 @@ async function fetchAllKartaCalls(
   return all;
 }
 
-function newAuditId(): string {
-  const stamp = new Date()
-    .toISOString()
-    .slice(0, 19)
-    .replace(/[-:T]/g, "");
+function newId(): string {
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "");
   return `${stamp}-${Math.random().toString(16).slice(2, 8)}`;
 }
+
+function getSummary(c: KartaCall): string {
+  return (
+    String(c.summary ?? c.conversation_summary ?? c.call_summary ?? "").trim()
+  );
+}
+
+function wordCount(t: string): number {
+  return t.trim().split(/\s+/).filter(Boolean).length;
+}
+
+const MIN_DURATION_SECONDS = 60;
+const MIN_SUMMARY_WORDS = 30;
+const CONCURRENCY = 8;
 
 export async function GET(req: Request) {
   try {
@@ -102,16 +129,17 @@ export async function GET(req: Request) {
     const allCalls = await fetchAllKartaCalls(apiKey, targetDate);
     console.log(`[otis] auto-ingest: ${allCalls.length} total calls from Karta`);
 
-    // Only ended calls with a valid recording URL
-    const MIN_DURATION_SECONDS = 60;
-const eligible = allCalls.filter((c) => {
-  if (String(c.call_status ?? "").toLowerCase() !== "ended") return false;
-  if (!c.recording_link || !/^https?:\/\//i.test(String(c.recording_link))) return false;
-  const dur = (c.talk_time ?? c.duration ?? null) as number | null;
-  if (dur !== null && dur < MIN_DURATION_SECONDS) return false;
-  return true;
-});
-    console.log(`[otis] auto-ingest: ${eligible.length} eligible calls`);
+    // Only ended calls that have a useful summary and meet min duration
+    const eligible = allCalls.filter((c) => {
+      if (String(c.call_status ?? "").toLowerCase() !== "ended") return false;
+      const summary = getSummary(c);
+      if (wordCount(summary) < MIN_SUMMARY_WORDS) return false;
+      const dur = (c.talk_time ?? c.duration ?? null) as number | null;
+      if (dur !== null && dur < MIN_DURATION_SECONDS) return false;
+      return true;
+    });
+
+    console.log(`[otis] auto-ingest: ${eligible.length} eligible calls (with summaries)`);
 
     if (eligible.length === 0) {
       return NextResponse.json({
@@ -147,16 +175,56 @@ const eligible = allCalls.filter((c) => {
       const otisAgentId =
         nameToOtisId.get(agentName.toLowerCase().trim()) ?? null;
 
-      const batchId = newBatchId();
+      // Dedup: skip calls already audited (by call_id or karta: target)
+      const candidateCallIds = calls
+        .filter((c) => c.call_id)
+        .map((c) => String(c.call_id));
+      const candidateTargets = calls.map(
+        (c) => `karta:${c.call_id ?? c.recording_link ?? ""}`,
+      );
+
+      const { data: existingByCallId } = await supabase
+        .from("audits")
+        .select("call_id")
+        .in("call_id", candidateCallIds);
+      const alreadyAuditedIds = new Set(
+        (existingByCallId ?? []).map((a: { call_id: string }) => a.call_id),
+      );
+
+      const { data: existingByTarget } = await supabase
+        .from("audits")
+        .select("target")
+        .in("target", candidateTargets);
+      const alreadyAuditedTargets = new Set(
+        (existingByTarget ?? []).map((a: { target: string }) => a.target),
+      );
+
+      const newCalls = calls.filter((c) => {
+        if (c.call_id && alreadyAuditedIds.has(String(c.call_id))) return false;
+        const t = `karta:${c.call_id ?? c.recording_link ?? ""}`;
+        if (alreadyAuditedTargets.has(t)) return false;
+        return true;
+      });
+
+      if (newCalls.length === 0) {
+        batchResults.push({
+          karta_agent_id: kartaAgentId,
+          agent_name: agentName,
+          skipped: "all already audited",
+        });
+        continue;
+      }
+
+      // Create batch record with label (visible on batches page)
+      const batchId = newId();
       const { error: batchErr } = await supabase.from("batches").insert({
         id: batchId,
         label: `Karta ${targetDate} — ${agentName}`,
         agent_id: otisAgentId,
-        preset: "general",
+        preset: "support",
         strictness: "standard",
-        custom_focus: null,
-        url_column: "recording_link",
-        total: calls.length,
+        custom_focus: "",
+        total: newCalls.length,
         created_at: now,
       });
 
@@ -169,53 +237,78 @@ const eligible = allCalls.filter((c) => {
         continue;
       }
 
-      // Dedup: skip recordings already audited
-      const candidateUrls = calls.map((c) => String(c.recording_link));
-      const { data: existingAudits } = await supabase
-        .from("audits")
-        .select("target")
-        .in("target", candidateUrls);
-      const alreadyAudited = new Set((existingAudits ?? []).map((a: { target: string }) => a.target));
-      const newCalls = calls.filter((c) => !alreadyAudited.has(String(c.recording_link)));
-      if (newCalls.length === 0) {
-        batchResults.push({ karta_agent_id: kartaAgentId, agent_name: agentName, skipped: "all already audited" });
-        await supabase.from("batches").delete().eq("id", batchId);
-        continue;
-      }
+      // Insert audit rows with transcript pre-stored, then score via finalizeAudit
+      const scoreResults: { callId: string; status: string }[] = [];
 
-      const auditRows = newCalls.map((c) => ({
-        id: newAuditId(),
-        timestamp: now,
-        source: "batch",
-        target: String(c.recording_link),
-        call_id: c.call_id ? String(c.call_id) : null,
-              mobile_number: String(c.from_number ?? c.caller_number ?? c.phone_number ?? c.customer_number ?? "").trim() || null,
-        preset: "general",
-        strictness: "standard",
-        custom_focus: "",
-        agent_id: otisAgentId,
-        batch_id: batchId,
-        status: "queued",
-      }));
+      async function processOne(c: KartaCall) {
+        const summary = getSummary(c);
+        const callId = String(c.call_id ?? "");
+        const durSecs =
+          c.talk_time != null
+            ? Math.round(Number(c.talk_time))
+            : c.duration != null
+              ? Math.round(Number(c.duration))
+              : null;
 
-      let insertError: string | null = null;
-      for (let i = 0; i < auditRows.length; i += 500) {
-        const { error } = await supabase
-          .from("audits")
-          .insert(auditRows.slice(i, i + 500));
-        if (error) {
-          insertError = error.message;
-          break;
+        const auditId = newId();
+        const { error: insertErr } = await supabase.from("audits").insert({
+          id: auditId,
+          timestamp: c.call_start_stamp ?? c.call_initiated_stamp ?? now,
+          source: "karta_cron",
+          target: `karta:${callId}`,
+          call_id: callId || null,
+          mobile_number:
+            String(
+              c.from_number ??
+                c.caller_number ??
+                c.phone_number ??
+                c.customer_number ??
+                "",
+            ).trim() || null,
+          preset: "support",
+          strictness: "standard",
+          custom_focus: "",
+          agent_id: otisAgentId,
+          batch_id: batchId,
+          status: "transcribing",
+          transcript: summary,
+          duration_seconds: durSecs,
+          // deepgram_ prefix tells finalize.ts to read transcript from DB column
+          transcript_id: `deepgram_karta_${callId}`,
+          disconnect_reason:
+            String(c.disconnectedBy ?? c.disconnected_by ?? "").trim() || null,
+        });
+
+        if (insertErr) {
+          return { callId, status: `insert_error: ${insertErr.message}` };
         }
+
+        const { status } = await finalizeAudit(auditId);
+        return { callId, status };
       }
+
+      // Process in parallel batches
+      for (let i = 0; i < newCalls.length; i += CONCURRENCY) {
+        const chunk = newCalls.slice(i, i + CONCURRENCY);
+        const results = await Promise.all(chunk.map(processOne));
+        scoreResults.push(...results);
+      }
+
+      const completed = scoreResults.filter((r) => r.status === "completed").length;
+      const failed = scoreResults.filter((r) => r.status === "failed").length;
+      const errors = scoreResults.filter((r) =>
+        r.status.startsWith("insert_error"),
+      ).length;
 
       batchResults.push({
         karta_agent_id: kartaAgentId,
         agent_name: agentName,
         otis_agent_id: otisAgentId,
-        call_count: calls.length,
-        batch_id: insertError ? null : batchId,
-        error: insertError,
+        call_count: newCalls.length,
+        batch_id: batchId,
+        completed,
+        failed,
+        errors,
       });
     }
 
