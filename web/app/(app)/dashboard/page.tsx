@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import DashboardClient, { typeh LeaderboardEntry } from "./dashboard-client";
+import DashboardClient, { type LeaderboardEntry } from "./dashboard-client";
 import {
   parseAuditFilters,
   hasAnyFilter,
