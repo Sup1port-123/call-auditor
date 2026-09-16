@@ -17,7 +17,8 @@ type State = {
   scoreMin: string;
   scoreMax: string;
   review: string[];
-  agents: string[]; // selected agent ids
+  agents: string[];
+  status: string[];  // selected audit statuses // selected agent ids
 };
 
 function initState(p: RawParams): State {
@@ -35,8 +36,17 @@ function initState(p: RawParams): State {
     scoreMax: p.scoreMax ?? "",
     review: p.review ? p.review.split(",").filter(Boolean) : [],
     agents: p.agents ? p.agents.split(",").filter(Boolean) : [],
+    status: p.status ? p.status.split(",").filter(Boolean) : [],
   };
 }
+
+const STATUS_OPTIONS = [
+  { value: "completed", label: "✅ Completed" },
+  { value: "failed", label: "❌ Failed" },
+  { value: "transcribing", label: "⏳ Transcribing" },
+  { value: "scoring", label: "🔄 Scoring" },
+  { value: "queued", label: "📋 Queued" },
+];
 
 const REVIEW_OPTIONS = [
   { value: "reviewed", label: "Reviewed" },
@@ -64,6 +74,7 @@ function buildQuery(s: State): string {
   }
   if (s.review.length) p.set("review", s.review.join(","));
   if (s.agents.length) p.set("agents", s.agents.join(","));
+  if (s.status.length) p.set("status", s.status.join(","));
   return p.toString();
 }
 
@@ -109,13 +120,15 @@ export default function DashboardFilters({
   const scoreActive = !!(s.scoreOp && (s.scoreMin.trim() || s.scoreMax.trim()));
   const reviewActive = s.review.length > 0;
   const agentActive = s.agents.length > 0;
+  const statusActive = s.status.length > 0;
   const anyActive =
     dateActive ||
     callActive ||
     durActive ||
     scoreActive ||
     reviewActive ||
-    agentActive;
+    agentActive ||
+    statusActive;
 
   const dateSummary = dateActive
     ? [
@@ -147,6 +160,12 @@ export default function DashboardFilters({
     ? `Review (${s.review.length})`
     : "Review";
 
+  const statusSummary = statusActive
+    ? s.status.length === 1
+      ? STATUS_OPTIONS.find((o) => o.value === s.status[0])?.label.replace(/^.+ /, "") ?? "Status"
+      : `Status (${s.status.length})`
+    : "Status";
+
   const agentSummary = agentActive ? `Agent (${s.agents.length})` : "Agent";
 
   const toggleReview = (value: string) =>
@@ -154,6 +173,13 @@ export default function DashboardFilters({
       review: s.review.includes(value)
         ? s.review.filter((v) => v !== value)
         : [...s.review, value],
+    });
+
+  const toggleStatus = (value: string) =>
+    set({
+      status: s.status.includes(value)
+        ? s.status.filter((v) => v !== value)
+        : [...s.status, value],
     });
 
   const toggleAgent = (id: string) =>
@@ -199,6 +225,12 @@ export default function DashboardFilters({
           active={reviewActive}
           isOpen={open === "review"}
           onClick={() => setOpen(open === "review" ? null : "review")}
+        />
+        <Chip
+          label={statusSummary}
+          active={statusActive}
+          isOpen={open === "status"}
+          onClick={() => setOpen(open === "status" ? null : "status")}
         />
         {agentOptions.length > 0 && (
           <Chip
@@ -262,7 +294,7 @@ export default function DashboardFilters({
                   />
                 </Labeled>
                 <div className="grid grid-cols-2 gap-3 mt-3">
-                  <Labeled label="From">
+                  <Labeled label="From (IST)">
                     <input
                       type="date"
                       value={s.from}
@@ -270,7 +302,7 @@ export default function DashboardFilters({
                       className={inputCls}
                     />
                   </Labeled>
-                  <Labeled label="To">
+                  <Labeled label="To (IST)">
                     <input
                       type="date"
                       value={s.to}
@@ -279,6 +311,9 @@ export default function DashboardFilters({
                     />
                   </Labeled>
                 </div>
+                <p className="text-[11px] text-zinc-400 mt-2">
+                  Dates are interpreted in IST (India Standard Time).
+                </p>
                 <ResetRow onReset={() => set({ days: "", from: "", to: "" })} />
               </Panel>
             )}
@@ -429,6 +464,32 @@ export default function DashboardFilters({
                   ))}
                 </div>
                 <ResetRow onReset={() => set({ review: [] })} />
+              </Panel>
+            )}
+
+            {open === "status" && (
+              <Panel title="Audit status" onApply={apply}>
+                <p className="text-xs text-zinc-500 mb-3">
+                  Filter by processing status. Select "Completed" to see only
+                  scored audits, "Failed" to see errors, etc.
+                </p>
+                <div className="space-y-2">
+                  {STATUS_OPTIONS.map((o) => (
+                    <label
+                      key={o.value}
+                      className="flex items-center gap-3 rounded-xl bg-[var(--paper)] px-4 py-2.5 cursor-pointer hover:bg-[var(--paper-strong)] transition"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={s.status.includes(o.value)}
+                        onChange={() => toggleStatus(o.value)}
+                        className="h-4 w-4 accent-[var(--ink)]"
+                      />
+                      <span className="text-sm">{o.label}</span>
+                    </label>
+                  ))}
+                </div>
+                <ResetRow onReset={() => set({ status: [] })} />
               </Panel>
             )}
 
