@@ -43,7 +43,7 @@ export default async function DashboardPage({
     const { data: statsData, error: statsError } = await statsQuery
       .order("timestamp", { ascending: false })
       .limit(FILTER_CAP);
-        const { count: exactCount } = await applyAuditFilters(
+        const all = statsData ?? []; const { count: exactCount } = await applyAuditFilters(supabase.from("audits").select("*", { count: "exact", head: true }), filters,);
 
     const displayQuery = applyAuditFilters(
       supabase.from("audits").select(FULL_COLUMNS),
@@ -77,7 +77,7 @@ export default async function DashboardPage({
         avgScore={avgScore}
         avgDuration={avgDuration}
         recent={displayData ?? []}
-        filters={sp}
+        filters={sp}h
         agentOptions={agents}
         error={(statsError ?? displayError)?.message ?? null}
       />
