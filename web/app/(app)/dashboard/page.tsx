@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import DashboardClient, { type LeaderboardEntry } from "./dashboard-client";
+import DashboardClient, { typeh LeaderboardEntry } from "./dashboard-client";
 import {
   parseAuditFilters,
   hasAnyFilter,
@@ -43,7 +43,7 @@ export default async function DashboardPage({
     const { data: statsData, error: statsError } = await statsQuery
       .order("timestamp", { ascending: false })
       .limit(FILTER_CAP);
-    const all = statsData ?? [];
+        const { count: exactCount } = await applyAuditFilters(
 
     const displayQuery = applyAuditFilters(
       supabase.from("audits").select(FULL_COLUMNS),
@@ -73,7 +73,7 @@ export default async function DashboardPage({
     return (
       <DashboardClient
         filtered
-        matchCount={all.length}
+        matchCount={exactCount ?? all.length}
         avgScore={avgScore}
         avgDuration={avgDuration}
         recent={displayData ?? []}
