@@ -30,9 +30,18 @@ export type AuditFilters = {
   reviewStatuses: string[];
   // Agent ids (any subset of the configured agents)
   agentIds: string[];
+  // Audit processing status (completed / failed / transcribing / scoring / queued)
+  statuses: string[];
 };
 
 const REVIEW_VALUES = new Set(["reviewed", "not_reviewed", "flagged"]);
+const STATUS_VALUES = new Set([
+  "completed",
+  "failed",
+  "transcribing",
+  "scoring",
+  "queued",
+]);
 
 export type RawParams = Record<string, string | undefined>;
 
@@ -86,6 +95,10 @@ export function parseAuditFilters(p: RawParams): AuditFilters {
       .map((s) => s.trim())
       .filter(Boolean)
       .slice(0, 100),
+    statuses: (p.status ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => STATUS_VALUES.has(s)),
   };
 }
 
@@ -98,7 +111,8 @@ export function hasAnyFilter(f: AuditFilters): boolean {
     (f.durOp != null && (f.durMin != null || f.durMax != null)) ||
     (f.scoreOp != null && (f.scoreMin != null || f.scoreMax != null)) ||
     f.reviewStatuses.length > 0 ||
-    f.agentIds.length > 0
+    f.agentIds.length > 0 ||
+    f.statuses.length > 0
   );
 }
 
@@ -112,14 +126,14 @@ export function dateBounds(f: AuditFilters): { gte?: string; lte?: string } {
     lowers.push(Date.now() - f.days * 24 * 60 * 60 * 1000);
   }
   if (f.from) {
-    const d = new Date(`${f.from}T00:00:00`);
+    const d = new Date(`${f.from}T00:00:00+05:30`);
     if (!Number.isNaN(d.getTime())) lowers.push(d.getTime());
   }
   if (lowers.length > 0) {
     out.gte = new Date(Math.max(...lowers)).toISOString();
   }
   if (f.to) {
-    const d = new Date(`${f.to}T23:59:59.999`);
+    const d = new Date(`${f.to}T23:59:59.999+05:30`);
     if (!Number.isNaN(d.getTime())) out.lte = d.toISOString();
   }
   return out;
@@ -165,6 +179,9 @@ export function applyAuditFilters<T>(query: T, f: AuditFilters): T {
   if (f.reviewStatuses.length > 0) q.in("review_status", f.reviewStatuses);
 
   if (f.agentIds.length > 0) q.in("agent_id", f.agentIds);
+
+  // Status filter
+  if (f.statuses.length > 0) q.in("status", f.statuses);
 
   if (f.durOp) {
     // Exclude nulls and the -1 "unknown" backfill sentinel.
