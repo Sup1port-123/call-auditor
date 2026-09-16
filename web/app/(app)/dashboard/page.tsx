@@ -77,7 +77,7 @@ export default async function DashboardPage({
         avgScore={avgScore}
         avgDuration={avgDuration}
         recent={displayData ?? []}
-        filters={sp}h
+        filters={sp}
         agentOptions={agents}
         error={(statsError ?? displayError)?.message ?? null}
       />
