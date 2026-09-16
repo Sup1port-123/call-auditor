@@ -18,7 +18,8 @@ export async function GET(req: Request) {
     .select("id, status, timestamp, overall_score, agent_id, agents(name)")
     .gte("timestamp", fromISO)
     .lte("timestamp", toISO)
-    .order("timestamp", { ascending: true });
+    .order("timestamp", { ascending: true })
+      .limit(100000); // override Supabase default 1000-row cap
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   const rows = audits ?? [];
   const total = rows.length;
