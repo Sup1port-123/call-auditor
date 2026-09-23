@@ -13,6 +13,7 @@
 //
 // Auto-detects format from CSV headers.
 // No audio / recording URL needed — skips AssemblyAI entirely.
+// Handles any file size — client chunks large files before sending.
 
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -21,37 +22,33 @@ import { finalizeAudit } from "@/lib/finalize";
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-function parseCSVLine(line) {
-  const result = [];
-  let current = "";
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (ch === '"') {
-      if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
-      else { inQuotes = !inQuotes; }
-    } else if (ch === "," && !inQuotes) {
-      result.push(current); current = "";
-    } else { current += ch; }
-  }
-  result.push(current);
-  return result;
-}
-
+// Proper CSV parser — handles quoted multiline fields (chatHistory spans multiple lines)
 function parseCSV(text) {
-  const lines = text.split(/\r?\n/);
-  if (lines.length < 2) return [];
-  const headers = parseCSVLine(lines[0]).map((h) => h.trim());
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1); // strip BOM
   const rows = [];
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
-    const values = parseCSVLine(line);
-    const row = {};
-    headers.forEach((h, idx) => { row[h] = (values[idx] ?? "").trim(); });
-    rows.push(row);
+  let col = '', cols = [], inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"') {
+      if (inQ && text[i + 1] === '"') { col += '"'; i++; }
+      else inQ = !inQ;
+    } else if (c === ',' && !inQ) {
+      cols.push(col); col = '';
+    } else if ((c === '\n' || c === '\r') && !inQ) {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      cols.push(col); col = '';
+      if (cols.some(x => x !== '')) rows.push(cols);
+      cols = [];
+    } else { col += c; }
   }
-  return rows;
+  if (col || cols.length) { cols.push(col); if (cols.some(x => x !== '')) rows.push(cols); }
+  if (rows.length < 2) return [];
+  const headers = rows[0].map(h => h.trim());
+  return rows.slice(1).map(values => {
+    const row = {};
+    headers.forEach((h, idx) => { row[h] = (values[idx] ?? '').trim(); });
+    return row;
+  });
 }
 
 function detectFormat(headers) {
@@ -108,7 +105,7 @@ function mapCallDetailsRow(row) {
   const callStartStamp = row["callStartStamp"] || row["createdAt"] || row["time"] || null;
   const agentName = row["agentName"] || null;
   return { callId, transcript: summary, phoneNumber, durationSecs, disconnectedBy, callStartStamp, agentName, format: "call_details" };
-        }
+}
 
 const MIN_WORDS = 30;
 const MIN_SECS  = 60;
@@ -173,7 +170,7 @@ export async function POST(req) {
       call_id: call.callId, mobile_number: call.phoneNumber ?? null,
       preset, strictness, custom_focus: customFocus, agent_id: agentId, batch_id: batchId,
       status: "transcribing", transcript, duration_seconds: durSecs,
-      transcript_id: "deepgram_convozen_" + call.callId,
+      transcript_id: "convozen_" + call.callId,
       disconnect_reason: call.disconnectedBy ?? null,
     });
     if (insertErr) return { callId: call.callId, status: "insert_error: " + insertErr.message };
@@ -192,4 +189,4 @@ export async function POST(req) {
   const skipped   = results.filter((r) => r.status.startsWith("skipped")).length;
 
   return NextResponse.json({ batchId, format, total: calls.length, completed, failed, skipped, results });
-          }
+}
