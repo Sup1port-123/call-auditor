@@ -9,6 +9,7 @@ import {
   isInboundAgent,
   type RubricDimension,
 } from "./rubric";
+import { scoreWithJev } from "./jev";
 
 export type DimScore = {
   score: number | null;
@@ -284,7 +285,17 @@ export async function scoreTranscript(opts: {
     preset: opts.preset, strictness: opts.strictness, customFocus: opts.customFocus,
     agentName: opts.agentName, knowledgeBase: opts.knowledgeBase, rubric,
   });
-  const ALL_PROVIDERS = ["openai", "gemini", "anthropic"];
+  // ── Jev hybrid: Jev scores + Gemini text ──────────────────────────────────
+  if (process.env.JEV_API_KEY) {
+    try {
+      const result = await scoreWithJevHybrid(opts, rubric);
+      return { ...result, llm_provider: "jev", llm_fallback_reason: null };
+    } catch (err) {
+      console.error("[otis] Jev hybrid failed, falling back to LLM:", err instanceof Error ? err.message : String(err));
+    }
+  }
+
+    const ALL_PROVIDERS = ["openai", "gemini", "anthropic"];
   const explicit = (process.env.LLM_PROVIDER || "openai").toLowerCase();
   const order = [explicit, ...ALL_PROVIDERS.filter((p) => p !== explicit)];
   let fallbackReason: string | null = null;
@@ -315,6 +326,150 @@ export async function scoreTranscript(opts: {
     }
   }
   throw new Error("Every configured LLM failed. Set OPENAI_API_KEY, GOOGLE_API_KEY, or ANTHROPIC_API_KEY.");
+}
+
+// ── Jev hybrid: scores via Jev, text feedback via Gemini/OpenAI ─────────────
+
+async function scoreWithJevHybrid(
+  opts: Parameters<typeof scoreTranscript>[0],
+  rubric: RubricDimension[],
+): Promise<EvaluationResult> {
+  const complianceChecks = getComplianceChecks(opts.agentName);
+
+  // 1. Get structured scores from Jev
+  const jev = await scoreWithJev({
+    transcript: opts.transcript,
+    rubric,
+    complianceChecks,
+    agentName: opts.agentName,
+    customFocus: opts.customFocus,
+  });
+
+  // 2. Get text fields from Gemini (or OpenAI as fallback)
+  const text = await getTextFeedback(opts, rubric, jev.scores, jev.overall_score);
+
+  // 3. Build enriched scores (merges jev score values with rationale from text pass)
+  const enriched: Record<string, DimScore> = {};
+  for (const d of rubric) {
+    const jevScore = jev.scores[d.key];
+    const textScore = text.scores?.[d.key];
+    enriched[d.key] = {
+      score: jevScore?.score ?? null,
+      rationale: textScore?.rationale ?? "",
+      name: d.name,
+      min: d.min,
+      max: d.max,
+    };
+  }
+
+  // 4. Build compliance_json from Jev results
+  const script_compliance: Record<string, { passed: boolean; evidence: string }> = {};
+  for (const c of complianceChecks) {
+    const jevC = jev.compliance[c.key];
+    script_compliance[c.key] = {
+      passed: jevC?.passed ?? false,
+      evidence: jevC?.passed
+        ? "Observed in transcript"
+        : "Not observed in transcript",
+    };
+  }
+
+  const maxDimMax = rubric.reduce((mx, d) => Math.max(mx, d.max), 0);
+  const rubricTotalMax = rubric.reduce((s, d) => s + d.max, 0);
+  const rawOverall = jev.overall_score ?? 0;
+  const normalizedOverall =
+    maxDimMax > DEFAULT_MAX && rawOverall > 5 && rubricTotalMax > 0
+      ? Math.round(((rawOverall / rubricTotalMax) * 5) * 10) / 10
+      : Math.min(5, Math.max(0, rawOverall));
+
+  return {
+    scores: enriched,
+    overall_score: normalizedOverall,
+    summary: text.summary,
+    strengths: text.strengths,
+    what_was_lacking: text.what_was_lacking,
+    improvement_recommendations: text.improvement_recommendations,
+    script_compliance,
+    call_reason: text.call_reason,
+  };
+}
+
+/** Calls Gemini (or OpenAI) with a compact text-only prompt — no scoring. */
+async function getTextFeedback(
+  opts: Parameters<typeof scoreTranscript>[0],
+  rubric: RubricDimension[],
+  jevScores: Record<string, { score: number | null }>,
+  overallScore: number | null,
+): Promise<{
+  scores?: Record<string, { rationale?: string }>;
+  summary: string;
+  strengths: string;
+  what_was_lacking: string;
+  improvement_recommendations: string[];
+  call_reason?: string;
+}> {
+  const scoreSummary = rubric
+    .map((d) => `  ${d.name}: ${jevScores[d.key]?.score ?? "?"}/${d.max}`)
+    .join("\n");
+  const focusLine = opts.customFocus ? `\nAudit Focus: ${opts.customFocus}` : "";
+  const inbound = isInboundAgent(opts.agentName);
+
+  const prompt = `You are a call quality coach. Jev AI has already scored this call:
+
+Agent: ${opts.agentName || "agent"}${focusLine}
+Overall: ${overallScore ?? "?"}/5
+
+Scores:
+${scoreSummary}
+
+TRANSCRIPT:
+${opts.transcript}
+
+Return JSON with these fields ONLY (no scoring needed):
+{
+  "summary": "2–3 sentence call summary",
+  "strengths": "what the agent did well",
+  "what_was_lacking": "what needs improvement",
+  "improvement_recommendations": ["rec 1", "rec 2", "rec 3"]
+  ${inbound ? ', "call_reason": "brief reason for the call"' : ""}
+}`;
+
+  // Try Gemini first, then OpenAI
+  if (process.env.GOOGLE_API_KEY) {
+    try {
+      const { GoogleGenAI } = await import("@google/genai");
+      const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY });
+      const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+      const response = await ai.models.generateContent({
+        model,
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        config: { responseMimeType: "application/json", temperature: 0.3 },
+      });
+      const text = response.text;
+      if (text) return JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim());
+    } catch (e) {
+      console.error("[otis] getTextFeedback Gemini failed:", e);
+    }
+  }
+  if (process.env.OPENAI_API_KEY) {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+      body: JSON.stringify({
+        model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+        temperature: 0.3,
+        response_format: { type: "json_object" },
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+      const t = data.choices?.[0]?.message?.content;
+      if (t) return JSON.parse(t);
+    }
+  }
+  // Bare minimum fallback
+  return { summary: "", strengths: "", what_was_lacking: "", improvement_recommendations: [] };
 }
 
 async function scoreWithOpenAI(systemPrompt: string, transcript: string): Promise<EvaluationResult> {
