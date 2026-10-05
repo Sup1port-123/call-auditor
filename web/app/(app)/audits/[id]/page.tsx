@@ -18,6 +18,8 @@ type AuditRow = Audit & {
   status?: string;
   error_message?: string | null;
   agent_id?: string | null;
+  call_id?: string | null;
+  mobile_number?: string | null;
 };
 
 export default async function AuditDetailPage({
@@ -133,7 +135,17 @@ export default async function AuditDetailPage({
                 {audit.strictness}
               </span>
             )}
-          </div>
+          {audit.call_id && (
+              <span className="rounded-full bg-[var(--sky-100)] text-[var(--sky-700)] px-3 py-1 font-mono">
+                Call ID: {audit.call_id}
+              </span>
+            )}
+            {audit.mobile_number && (
+              <span className="rounded-full bg-[var(--paper)] px-3 py-1">
+                {audit.mobile_number}
+              </span>
+            )}
+            </div>
           <div className="flex items-center gap-3 mt-4">
             <span className="text-[11px] uppercase tracking-[0.2em] text-zinc-400">
               Review
