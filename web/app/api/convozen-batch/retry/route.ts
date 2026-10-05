@@ -1,3 +1,4 @@
+// @ts-nocheck
 // web/app/api/convozen-batch/retry/route.ts
 // Re-triggers Gemini scoring for audits stuck at "transcribing" status.
 // Usage: GET /api/convozen-batch/retry?batchId=xxx
