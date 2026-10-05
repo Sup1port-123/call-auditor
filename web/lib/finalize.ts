@@ -115,7 +115,8 @@ let durationSeconds: number | null;
 if (
 audit.transcript_id.startsWith("whisper_") ||
 audit.transcript_id.startsWith("sarvam_") ||
-audit.transcript_id.startsWith("deepgram_")
+audit.transcript_id.startsWith("deepgram_") ||
+audit.transcript_id.startsWith("convozen_")
 ) {
 const { data: stored } = await supabase.from("audits").select("transcript, duration_seconds").eq("id", auditId).maybeSingle();
 transcriptText = stored?.transcript ?? "";
