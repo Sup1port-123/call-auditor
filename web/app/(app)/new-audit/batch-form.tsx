@@ -67,6 +67,16 @@ export default function BatchForm({
       const headers = Object.keys(rows[0]);
       const col = detectUrlColumn(headers);
       if (!col) {
+        // Check if this looks like a Convozen AI Call Logs export
+        const normHdrs = headers.map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ""));
+        const isConvozen = normHdrs.some(h =>
+          ["transcript", "chathist", "summary", "npsscore", "bottalktimemins"].some(s => h.includes(s))
+        );
+        if (isConvozen) {
+          throw new Error(
+            "This looks like a Convozen AI Call Logs export (found: Transcript / summary columns). Please use the Convozen Batch Upload page instead — go to /convozen-batch to upload this file."
+          );
+        }
         throw new Error(
           `Couldn't find a recording-URL column. Name one "recording_url", "audio_url", "recording", … Columns found: ${headers.join(", ")}`,
         );
