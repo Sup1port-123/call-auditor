@@ -190,6 +190,7 @@ export async function POST(req) {
   const errored  = results.filter((r) => r.status.startsWith("insert_error")).length;
 
   return NextResponse.json({ batchId, format, total: calls.length, queued, skipped, errored });
+}
 
 
 // GET /api/convozen-batch?retry=true&batchId=xxx&limit=25
