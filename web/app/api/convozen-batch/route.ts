@@ -190,3 +190,27 @@ export async function POST(req) {
   const errored  = results.filter((r) => r.status.startsWith("insert_error")).length;
 
   return NextResponse.json({ batchId, format, total: calls.length, queued, skipped, errored });
+
+
+// GET /api/convozen-batch?retry=true&batchId=xxx&limit=25
+// Re-triggers Gemini scoring for audits stuck at "transcribing" status.
+export async function GET(req) {
+  const { searchParams } = new URL(req.url);
+  const batchId = searchParams.get("batchId");
+  const limit = Math.min(parseInt(searchParams.get("limit") || "25"), 25);
+  if (!batchId) return NextResponse.json({ error: "batchId required" }, { status: 400 });
+  const db = createAdminClient();
+  const { data: stuck, error } = await db
+    .from("audits").select("id")
+    .eq("batch_id", batchId).eq("status", "transcribing").limit(limit);
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!stuck || stuck.length === 0) return NextResponse.json({ message: "No stuck audits.", retriggered: 0 });
+  const outcomes = await Promise.all(stuck.map(async ({ id }) => {
+    try { const { status } = await finalizeAudit(id); return { id, status }; }
+    catch (e) { return { id, status: "error", error: e.message }; }
+  }));
+  const completed = outcomes.filter((o) => o.status === "completed").length;
+  const { count: remaining } = await db.from("audits").select("id", { count: "exact", head: true })
+    .eq("batch_id", batchId).eq("status", "transcribing");
+  return NextResponse.json({ batchId, retriggered: stuck.length, completed, failed: stuck.length - completed, remaining });
+}
