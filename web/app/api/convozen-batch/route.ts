@@ -174,8 +174,9 @@ export async function POST(req) {
       disconnect_reason: call.disconnectedBy ?? null,
     });
     if (insertErr) return { callId: call.callId, status: "insert_error: " + insertErr.message };
-    const { status } = await finalizeAudit(auditId);
-    return { callId: call.callId, auditId, status };
+    // Fire-and-forget — don't await (avoids Vercel 300s timeout for large batches)
+    finalizeAudit(auditId).catch(console.error);
+    return { callId: call.callId, auditId, status: "queued" };
   }
 
   for (let i = 0; i < calls.length; i += CONCURRENCY) {
@@ -184,9 +185,8 @@ export async function POST(req) {
     results.push(...chunkResults);
   }
 
-  const completed = results.filter((r) => r.status === "completed").length;
-  const failed    = results.filter((r) => r.status === "failed").length;
-  const skipped   = results.filter((r) => r.status.startsWith("skipped")).length;
+    const queued  = results.filter((r) => r.status === "queued").length;
+  const skipped  = results.filter((r) => r.status.startsWith("skipped")).length;
+  const errored  = results.filter((r) => r.status.startsWith("insert_error")).length;
 
-  return NextResponse.json({ batchId, format, total: calls.length, completed, failed, skipped, results });
-}
+  return NextResponse.json({ batchId, format, total: calls.length, queued, skipped, errored });
