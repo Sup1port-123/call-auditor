@@ -56,7 +56,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const { data: batch } = await supabase
     .from("batches")
-    .select("id, label, custom_focus")
+    .select("id, label, custom_focus, source")
     .eq("id", id)
     .maybeSingle();
   if (!batch) return NextResponse.json({ error: "batch not found" }, { status: 404 });
@@ -96,6 +96,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const focusBadge = (batch as any).custom_focus
     ? `<span style="background:#fef3c7;color:#92400e;border:1px solid #fde68a;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:600;">Focus: ${(batch as any).custom_focus}</span>`
     : "";
+
+  // Determine source label for subject line
+  const sourceLabel = (batch as any).source === "convozen" ? "Convozen" : "Karta";
+  const agentPart = (batch as any).custom_focus ? ` – ${(batch as any).custom_focus}` : "";
+  const reportDate = new Date().toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "Asia/Kolkata",
+  });
 
   const html = `
 <div style="font-family:system-ui,sans-serif;max-width:900px;margin:0 auto;padding:24px;">
@@ -140,7 +150,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   try {
     await sendEmail({
       to: recipients,
-      subject: `Otis batch complete — ${batch.label || id} (${completed.length}/${rows.length} scored)`,
+      subject: `[${sourceLabel}${agentPart}] Audit Report – ${reportDate} (${completed.length}/${rows.length} scored)`,
       html,
     });
     return NextResponse.json({ sent: true, recipients: recipients.length, audits: rows.length });
