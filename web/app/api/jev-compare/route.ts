@@ -1,4 +1,3 @@
-Route · TS
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
