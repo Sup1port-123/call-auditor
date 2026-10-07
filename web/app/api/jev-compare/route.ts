@@ -1,3 +1,5 @@
+
+Route · TS
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
@@ -5,6 +7,7 @@ import {
   SCRIPT_COMPLIANCE_CHECKS,
   INBOUND_COMPLIANCE_CHECKS,
   GRO_SCORE_COMPLIANCE_CHECKS,
+  parseRubricJson,
 } from "@/lib/rubric";
  
 // Jev vs Otis comparison (experimental).
@@ -81,7 +84,7 @@ export async function POST(req: Request) {
     const id = (body.id || "").trim();
     if (!id) return NextResponse.json({ error: "Audit ID missing" }, { status: 400 });
  
-    const directKey = process.env.JEV_COMPARE_API_KEY;
+    const directKey = (process.env.JEV_COMPARE_API_KEY || "").trim();
     const direct = Boolean(directKey);
     const token =
       directKey ||
@@ -99,22 +102,44 @@ export async function POST(req: Request) {
     const supabase = createAdminClient();
     const { data: audit, error } = await supabase
       .from("audits")
-      .select("id, timestamp, llm_provider, overall_score, summary, scores_json, compliance_json, transcript")
+      .select("id, timestamp, agent_id, llm_provider, overall_score, summary, scores_json, compliance_json, transcript")
       .eq("id", id)
       .maybeSingle();
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     if (!audit) return NextResponse.json({ error: "Audit not found" }, { status: 404 });
     if (!audit.transcript) return NextResponse.json({ error: "This audit has no transcript" }, { status: 400 });
  
+    // The agent's own rubric holds the scoring criteria Otis's LLM was given.
+    // Jev must get the same criteria, otherwise it scores from the parameter name alone.
+    let agentName = "";
+    const agentCriteria: Record<string, string> = {};
+    if (audit.agent_id) {
+      const { data: agent } = await supabase
+        .from("agents")
+        .select("name, rubric_json")
+        .eq("id", audit.agent_id)
+        .maybeSingle();
+      agentName = agent?.name || "";
+      for (const d of parseRubricJson(agent?.rubric_json) || []) agentCriteria[d.key] = d.criteria;
+    }
+ 
     const rawScores = safeParse<Record<string, Dim | number>>(audit.scores_json, {});
-    const dims: { key: string; name: string; min: number; max: number; otis: number | null; rationale: string }[] = [];
+    const dims: {
+      key: string; name: string; criteria: string; min: number; max: number; otis: number | null; rationale: string;
+    }[] = [];
     for (const [key, v] of Object.entries(rawScores)) {
       const d: Dim = typeof v === "number" ? { score: v } : v || { score: null };
+      const min = typeof d.min === "number" ? d.min : 1;
+      const max = typeof d.max === "number" ? d.max : 5;
+      // Some rubrics store scoring rules ("Rule 1 ...") as 0-1 entries. They are
+      // instructions to the scorer, not call parameters, so they are left out.
+      if (max - min <= 1) continue;
       dims.push({
         key,
         name: d.name || DIM_TEXT[key]?.name || key,
-        min: typeof d.min === "number" ? d.min : 1,
-        max: typeof d.max === "number" ? d.max : 5,
+        criteria: agentCriteria[key] || DIM_TEXT[key]?.criteria || "",
+        min,
+        max,
         otis: typeof d.score === "number" ? d.score : null,
         rationale: d.rationale || "",
       });
@@ -137,7 +162,7 @@ export async function POST(req: Request) {
     dims.forEach((d, i) => {
       questions[`d${i}`] = {
         type: "score",
-        instructions: `${d.name}: ${DIM_TEXT[d.key]?.criteria || "Rate how well the agent did on this."}${CONTEXT}`,
+        instructions: `${d.name}: ${d.criteria || "Rate how well the agent did on this."}${CONTEXT}`,
         criteria: LADDER,
       };
     });
@@ -186,6 +211,7 @@ export async function POST(req: Request) {
         otis: d.otis,
         jev,
         confidence: typeof a?.confidence === "number" ? a.confidence : probs.length ? Math.max(...probs) : null,
+        hasCriteria: Boolean(d.criteria),
         rationale: d.rationale,
       };
     });
@@ -213,6 +239,7 @@ export async function POST(req: Request) {
       audit: {
         id: audit.id,
         timestamp: audit.timestamp,
+        agent: agentName,
         llm_provider: audit.llm_provider,
         summary: audit.summary,
       },
