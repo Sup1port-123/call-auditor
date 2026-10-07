@@ -153,7 +153,7 @@ export async function POST(req) {
   const db  = createAdminClient();
   const now = new Date().toISOString();
   const batchId = newId();
-  await db.from("batches").insert({ id: batchId, name: batchName, agent_id: agentId, preset, strictness, custom_focus: customFocus, created_at: now });
+  await db.from("batches").insert({ id: batchId, name: batchName, agent_id: agentId, preset, strictness, custom_focus: customFocus, created_at: now, source: "convozen" });
 
   const CONCURRENCY = 10;
   const results = [];
