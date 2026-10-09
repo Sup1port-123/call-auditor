@@ -201,6 +201,58 @@ async function submitTranscriptionWithWhisper(audioUrl: string): Promise<{
   return { transcriptId, transcript, durationSeconds };
 }
 
+
+async function submitTranscriptionWithGemini(audioUrl: string): Promise<{
+  transcriptId: string;
+  transcript: string;
+  durationSeconds: number | null;
+}> {
+  const apiKey = process.env.GOOGLE_API_KEY!;
+  const model = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+  const audioRes = await fetch(audioUrl);
+  if (!audioRes.ok) throw new Error(`Could not download audio (${audioRes.status})`);
+  const audioBuffer = await audioRes.arrayBuffer();
+  const base64 = Buffer.from(audioBuffer).toString("base64");
+  const urlPath = audioUrl.split("?")[0];
+  const ext = urlPath.split(".").pop()?.toLowerCase() ?? "mp3";
+  const MIME_MAP: Record<string, string> = {
+    mp3: "audio/mpeg", mp4: "audio/mp4", mpeg: "audio/mpeg",
+    mpga: "audio/mpeg", m4a: "audio/m4a", wav: "audio/wav",
+    webm: "audio/webm", ogg: "audio/ogg",
+  };
+  const mimeType = MIME_MAP[ext] ?? "audio/mpeg";
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{
+          parts: [
+            { text: "Transcribe this call recording exactly as spoken. Format as:\n[MM:SS] Speaker A: text\n[MM:SS] Speaker B: text\n\nSpeaker A = agent, Speaker B = customer. Include timestamps. Transcribe in the original language (Hindi/English/Hinglish)." },
+            { inline_data: { mime_type: mimeType, data: base64 } },
+          ],
+        }],
+        generationConfig: { temperature: 0.1 },
+      }),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Gemini transcription error (${res.status}): ${body.slice(0, 300)}`);
+  }
+  const data = await res.json() as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+  const transcript = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+  const transcriptId = `gemini_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+  let durationSeconds: number | null = null;
+  const timeMatches = [...transcript.matchAll(/\[(\d+):(\d+)\]/g)];
+  if (timeMatches.length > 0) {
+    const last = timeMatches[timeMatches.length - 1];
+    durationSeconds = parseInt(last[1]) * 60 + parseInt(last[2]);
+  }
+  return { transcriptId, transcript, durationSeconds };
+}
+
 export async function submitTranscription(opts: {
   audioUrl: string;
   webhookUrl: string;
@@ -213,6 +265,8 @@ export async function submitTranscription(opts: {
   const assemblyKey = process.env.ASSEMBLYAI_API_KEY;
   const deepgramKey = process.env.DEEPGRAM_API_KEY;
   const sarvamKey = process.env.SARVAM_API_KEY;
+  // Gemini voice-to-voice: when GOOGLE_API_KEY is available, skip AssemblyAI entirely
+  if (process.env.GOOGLE_API_KEY) return submitTranscriptionWithGemini(opts.audioUrl);
   if (!assemblyKey && deepgramKey) return submitTranscriptionWithDeepgram(opts.audioUrl);
   if (!assemblyKey && sarvamKey) return submitTranscriptionWithSarvam(opts.audioUrl);
   if (!assemblyKey) return submitTranscriptionWithWhisper(opts.audioUrl);
