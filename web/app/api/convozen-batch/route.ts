@@ -153,7 +153,8 @@ export async function POST(req) {
   const db  = createAdminClient();
   const now = new Date().toISOString();
   const batchId = newId();
-  await db.from("batches").insert({ id: batchId, name: batchName, agent_id: agentId, preset, strictness, custom_focus: customFocus, created_at: now, source: "convozen" });
+  const { error: batchErr } = await db.from("batches").insert({ id: batchId, label: batchName, agent_id: agentId, preset, strictness, custom_focus: customFocus, created_at: now });
+    if (batchErr) return NextResponse.json({ error: "Batch insert failed: " + batchErr.message }, { status: 500 });
 
   const CONCURRENCY = 10;
   const results = [];
