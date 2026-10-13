@@ -325,6 +325,27 @@ function enrichScores(
   return out;
 }
 
+// Retry helper: retries on rate-limit errors (429) with exponential backoff
+async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("429") || msg.toLowerCase().includes("rate limit") || msg.toLowerCase().includes("quota") || msg.toLowerCase().includes("too many requests")) {
+        const delay = Math.min(1000 * Math.pow(2, attempt), 16000);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
+}
+
+
 export async function scoreTranscript(opts: {
   transcript: string;
   preset?: string;
@@ -357,11 +378,11 @@ export async function scoreTranscript(opts: {
     try {
       let result: EvaluationResult | null = null;
       if (provider === "openai" && process.env.OPENAI_API_KEY)
-        result = await scoreWithOpenAI(systemPrompt, opts.transcript);
+        result = await withRetry(() => scoreWithOpenAI(systemPrompt, opts.transcript));
       else if (provider === "gemini" && process.env.GOOGLE_API_KEY)
-        result = await scoreWithGemini(systemPrompt, opts.transcript, rubric, opts.agentName);
+        result = await withRetry(() => scoreWithGemini(systemPrompt, opts.transcript, rubric, opts.agentName));
       else if (provider === "anthropic" && process.env.ANTHROPIC_API_KEY)
-        result = await scoreWithClaude(systemPrompt, opts.transcript);
+        result = await withRetry(() => scoreWithClaude(systemPrompt, opts.transcript));
       if (result) {
         const maxDimMax = rubric.reduce((mx: number, d: RubricDimension) => Math.max(mx, d.max), 0);
           const rubricTotalMax = rubric.reduce((s: number, d: RubricDimension) => s + d.max, 0);
