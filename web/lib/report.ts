@@ -1,4 +1,4 @@
-import { createAdminClient } from "@/lib/supabase/admin";
+himport { createAdminClient } from "@/lib/supabase/admin";
 import { buildAuditsXlsx, AUDIT_EXPORT_COLUMNS } from "@/lib/audit-export";
 import {
   SCRIPT_COMPLIANCE_CHECKS,
@@ -155,11 +155,9 @@ async function sendReportEmail(opts: { to: string[]; subject: string; html: stri
 
   if (smtpUser && smtpPass) {
     const { createTransport } = await import("nodemailer");
-    const smtpHost = process.env.SMTP_HOST;
+    const smtpHost = process.env.SMTP_HOST || "smtp-relay.brevo.com";
     const transport = createTransport(
-      smtpHost
-        ? { host: smtpHost, port: 587, secure: false, auth: { user: smtpUser, pass: smtpPass } }
-        : { service: "gmail", auth: { user: smtpUser, pass: smtpPass } },
+      { host: smtpHost, port: 587, secure: false, auth: { user: smtpUser, pass: smtpPass } },
     );
     await transport.sendMail({ from: from || smtpUser, to: opts.to.join(", "), subject: opts.subject, html: opts.html, attachments: [{ filename: opts.filename, content: Buffer.from(opts.xlsx) }] });
     return;
