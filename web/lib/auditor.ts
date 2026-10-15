@@ -264,20 +264,14 @@ durationSeconds?: number | null;
 const assemblyKey = process.env.ASSEMBLYAI_API_KEY;
 const deepgramKey = process.env.DEEPGRAM_API_KEY;
 const sarvamKey = process.env.SARVAM_API_KEY;
-// Gemini voice-to-voice: try Gemini first; on 402 (billing exhausted) auto-switch to AssemblyAI
+// Gemini voice-to-voice: try Gemini first; on any error auto-switch to AssemblyAI/Whisper
 if (process.env.GOOGLE_API_KEY) {
   try {
     return await submitTranscriptionWithGemini(opts.audioUrl);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    const is402 = msg.includes("402") || msg.toLowerCase().includes("payment") ||
-                  msg.toLowerCase().includes("credits are depleted") || msg.toLowerCase().includes("billing exhausted");
-    if (is402) {
-      console.warn("[otis] Gemini transcription 402 (billing exhausted) — auto-switching to AssemblyAI");
-      // Fall through to AssemblyAI / other provider below
-    } else {
-      throw err;
-    }
+    console.warn("[otis] Gemini transcription failed — switching to fallback:", msg.slice(0, 120));
+    // Fall through to AssemblyAI / Whisper on any error (400 invalid key, 402 billing, etc.)
   }
 }
 if (!assemblyKey && deepgramKey) return submitTranscriptionWithDeepgram(opts.audioUrl);
