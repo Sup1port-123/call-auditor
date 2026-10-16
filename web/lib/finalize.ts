@@ -90,7 +90,7 @@ async function checkAndSendBatchEmail(batchId: string): Promise<void> {
     .from("audits")
     .select("id", { count: "exact", head: true })
     .eq("batch_id", batchId)
-    .in("status", ["transcribing", "scoring"]);
+    .in("status", ["queued", "transcribing", "scoring"]);
   if (count !== 0) return;
 
   // All audits done — fire batch completion email
@@ -238,7 +238,7 @@ export async function finalizeAudit(auditId: string): Promise<{ status: string }
             .from("audits")
             .select("id", { count: "exact", head: true })
             .eq("batch_id", batchId)
-            .in("status", ["transcribing", "scoring"]);
+            .in("status", ["queued", "transcribing", "scoring"]);
           if (count === 0) {
             // Fire batch completion email
             checkAndSendBatchEmail(batchId).catch(console.error);
