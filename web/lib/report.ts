@@ -1,4 +1,4 @@
-himport { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { buildAuditsXlsx, AUDIT_EXPORT_COLUMNS } from "@/lib/audit-export";
 import {
   SCRIPT_COMPLIANCE_CHECKS,
