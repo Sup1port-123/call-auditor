@@ -10,6 +10,7 @@ import {
   type DimensionScore,
 } from "@/lib/types/audit";
 import AuditPoller from "./audit-poller";
+import { parseFocusFromCompliance } from "@/lib/focus";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -167,6 +168,38 @@ export default async function AuditDetailPage({
           </p>
         </Section>
       )}
+
+      {(() => {
+        const focus = parseFocusFromCompliance(
+          (audit as unknown as { compliance_json?: string | null }).compliance_json,
+        );
+        if (!focus) return null;
+        return (
+          <Section index={nextIndex()} title="Special audit question">
+            <p className="text-sm font-semibold text-zinc-900 mb-3">{focus.question}</p>
+            {focus.applicable ? (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="rounded-full bg-violet-100 text-violet-700 px-3 py-1 font-semibold">
+                    {focus.category}
+                  </span>
+                  <span className="rounded-full bg-[var(--paper)] px-3 py-1 text-zinc-500">
+                    confidence: {focus.confidence}
+                  </span>
+                </div>
+                <p className="text-zinc-700 leading-relaxed text-[15px]">{focus.finding}</p>
+                {focus.evidence && (
+                  <blockquote className="border-l-4 border-violet-300 pl-4 italic text-sm text-zinc-500">
+                    {focus.evidence}
+                  </blockquote>
+                )}
+              </div>
+            ) : (
+              <p className="text-zinc-500 text-sm">Not applicable to this call — {focus.finding}</p>
+            )}
+          </Section>
+        );
+      })()}
 
       {Object.keys(scores).length > 0 && (
         <Section index={nextIndex()} title="Dimensions">
