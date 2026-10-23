@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import nodemailer from "nodemailer";
+import { getOrBuildBatchFocusReport } from "@/lib/batch-focus";
+import { renderFocusReportHtml } from "@/lib/focus";
+
+export const maxDuration = 120;
 
 const RECIPIENTS = [
   "sameer.singh@gromo.in",
@@ -41,7 +45,7 @@ export async function POST(
     let tagPass = 0, tagTotal = 0;
     try {
       const c = JSON.parse(a.compliance_json ?? "{}");
-      const keys = Object.keys(c);
+      const keys = Object.keys(c).filter((k) => !k.startsWith("_"));
       tagTotal = keys.length;
       tagPass = keys.filter((k) => c[k]?.passed).length;
     } catch {}
@@ -62,6 +66,15 @@ export async function POST(
   const d = batchId.substring(0, 8);
   const dateStr = `${d.substring(6, 8)} ${MONTHS[parseInt(d.substring(4, 6)) - 1]} ${d.substring(0, 4)}`;
 
+  // Special audit focus report (only when the batch has an audit focus)
+  let focusHtml = "";
+  try {
+    const focusReport = await getOrBuildBatchFocusReport(batchId);
+    if (focusReport) focusHtml = renderFocusReportHtml(focusReport);
+  } catch (e) {
+    console.error("[email] focus report failed:", e);
+  }
+
   const html = `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"></head>
 <body style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,sans-serif">
@@ -76,6 +89,7 @@ export async function POST(
 <td style="width:25%;padding:4px"><div style="border:1px solid #e5e7eb;border-radius:10px;padding:16px;text-align:center;background:#fff"><div style="font-size:11px;color:#6b7280;text-transform:uppercase;margin-bottom:6px">AVG QUALITY</div><div style="font-size:30px;font-weight:800;color:#ca8a04">${avgScore}%</div></div></td>
 </tr>
 </table>
+${focusHtml}
 <div style="background:#fff;border-radius:10px;border:1px solid #e5e7eb;overflow:hidden">
 <table width="100%" cellpadding="0" cellspacing="0">
 <thead><tr style="background:#f9fafb;border-bottom:2px solid #e5e7eb">
