@@ -10,6 +10,12 @@ isInboundAgent,
 type RubricDimension,
 } from "./rubric";
 import { scoreWithJev } from "./jev";
+import {
+buildFocusPromptBlock,
+hasFocus,
+normalizeFocusResult,
+type FocusResult,
+} from "./focus";
 
 export type DimScore = {
 score: number | null;
@@ -29,6 +35,8 @@ improvement_recommendations: string[];
 script_compliance?: Record<string, { passed: boolean; evidence: string }>;
 /** Populated only for inbound calls — brief category of what the GP called about. */
 call_reason?: string;
+/** Populated only when the audit has a custom focus / special audit question. */
+focus_result?: FocusResult;
 };
 
 export type AuditScored = EvaluationResult & {
@@ -375,7 +383,12 @@ agentName: opts.agentName, knowledgeBase: opts.knowledgeBase, rubric,
 if (process.env.JEV_API_KEY) {
 try {
 const result = await scoreWithJevHybrid(opts, rubric);
-return { ...result, llm_provider: "jev", llm_fallback_reason: null };
+return {
+...result,
+focus_result: normalizeFocusResult(result.focus_result, opts.customFocus),
+llm_provider: "jev",
+llm_fallback_reason: null,
+};
 } catch (err) {
 console.error("[otis] Jev hybrid failed, falling back to LLM:", err instanceof Error ? err.message : String(err));
 }
@@ -391,7 +404,7 @@ let result: EvaluationResult | null = null;
 if (provider === "openai" && process.env.OPENAI_API_KEY)
 result = await withRetry(() => scoreWithOpenAI(systemPrompt, opts.transcript));
 else if (provider === "gemini" && process.env.GOOGLE_API_KEY)
-result = await withRetry(() => scoreWithGemini(systemPrompt, opts.transcript, rubric, opts.agentName));
+result = await withRetry(() => scoreWithGemini(systemPrompt, opts.transcript, rubric, opts.agentName, opts.customFocus));
 else if (provider === "anthropic" && process.env.ANTHROPIC_API_KEY)
 result = await withRetry(() => scoreWithClaude(systemPrompt, opts.transcript));
 if (result) {
@@ -404,7 +417,14 @@ const rawOverall = result.overall_score ?? 0;
 const normalizedOverall = (maxDimMax > DEFAULT_MAX && rawOverall > 5 && rubricTotalMax > 0)
 ? Math.round(((rawOverall / rubricTotalMax) * 5) * 10) / 10
 : Math.min(5, Math.max(0, rawOverall));
-return { ...result, scores: enrichScores(result.scores, rubric), overall_score: normalizedOverall, llm_provider: provider, llm_fallback_reason: fallbackReason };
+return {
+...result,
+scores: enrichScores(result.scores, rubric),
+overall_score: normalizedOverall,
+focus_result: normalizeFocusResult(result.focus_result, opts.customFocus),
+llm_provider: provider,
+llm_fallback_reason: fallbackReason,
+};
 }
 } catch (err) {
 fallbackReason = `${provider} failed: ${err instanceof Error ? err.message : String(err)}`;
@@ -477,6 +497,7 @@ what_was_lacking: text.what_was_lacking,
 improvement_recommendations: text.improvement_recommendations,
 script_compliance,
 call_reason: text.call_reason,
+focus_result: text.focus_result as FocusResult | undefined,
 };
 }
 
@@ -493,11 +514,13 @@ strengths: string;
 what_was_lacking: string;
 improvement_recommendations: string[];
 call_reason?: string;
+focus_result?: unknown;
 }> {
 const scoreSummary = rubric
 .map((d) => ` ${d.name}: ${jevScores[d.key]?.score ?? "?"}/${d.max}`)
 .join("\n");
-const focusLine = opts.customFocus ? `\nAudit Focus: ${opts.customFocus}` : "";
+const focusOn = hasFocus(opts.customFocus);
+const focusLine = focusOn ? `\n\n${buildFocusPromptBlock(opts.customFocus!)}` : "";
 const inbound = isInboundAgent(opts.agentName);
 
 const prompt = `You are a call quality coach. Jev AI has already scored this call:
@@ -518,6 +541,7 @@ Return JSON with these fields ONLY (no scoring needed):
 "what_was_lacking": "what needs improvement",
 "improvement_recommendations": ["rec 1", "rec 2", "rec 3"]
 ${inbound ? ', "call_reason": "brief reason for the call"' : ""}
+${focusOn ? ', "focus_result": { "applicable": true, "finding": "...", "category": "...", "evidence": "[MM:SS] quote", "confidence": "high|medium|low" }' : ""}
 }`;
 
 // Try Gemini first, then OpenAI
@@ -581,6 +605,7 @@ systemPrompt: string,
 transcript: string,
 rubric: RubricDimension[],
 agentName?: string,
+customFocus?: string,
 ): Promise<EvaluationResult> {
 const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY! });
 const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
@@ -638,6 +663,22 @@ const baseRequired = [
 if (isInboundAgent(agentName)) {
 baseProperties.call_reason = { type: Type.STRING };
 baseRequired.push("call_reason");
+}
+
+// Special audit question → structured focus_result
+if (hasFocus(customFocus)) {
+baseProperties.focus_result = {
+type: Type.OBJECT,
+properties: {
+applicable: { type: Type.BOOLEAN },
+finding: { type: Type.STRING },
+category: { type: Type.STRING },
+evidence: { type: Type.STRING },
+confidence: { type: Type.STRING, enum: ["high", "medium", "low"] },
+},
+required: ["applicable", "finding", "category", "evidence", "confidence"],
+};
+baseRequired.push("focus_result");
 }
 
 const response = await ai.models.generateContent({
