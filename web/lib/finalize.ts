@@ -220,6 +220,7 @@ recommendations_json: JSON.stringify(evaluation.improvement_recommendations),
 compliance_json: JSON.stringify({
 ...(evaluation.script_compliance ?? {}),
 ...(evaluation.call_reason ? { _call_reason: evaluation.call_reason } : {}),
+...(evaluation.focus_result ? { _focus_result: evaluation.focus_result } : {}),
 }),
 needs_review,
 review_reason,
