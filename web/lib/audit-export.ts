@@ -2,6 +2,7 @@ import { formatDuration } from "./audit-filters";
 import { parseScores, parseRecommendations } from "./types/audit";
 import { istStamp } from "./datetime";
 import { SCRIPT_COMPLIANCE_CHECKS } from "./rubric";
+import { parseFocusFromCompliance } from "./focus";
 
 // Single string literal — concatenating with `+` defeats supabase-js's
 // compile-time column parsing (the row type collapses to GenericStringError).
@@ -86,6 +87,13 @@ max: typeof obj?.max === "number" ? obj.max : 5,
 // Compliance check column headers
 const complianceHeaders = SCRIPT_COMPLIANCE_CHECKS.map((c) => `SC: ${c.name}`);
 
+// Special audit focus columns — only added when at least one row has a focus answer
+const parsedFocus = rows.map((r) => parseFocusFromCompliance(r.compliance_json));
+const hasFocusCols = parsedFocus.some(Boolean);
+const focusHeaders = hasFocusCols
+? ["Focus question", "Focus: Applicable", "Focus: Reason category", "Focus: Finding", "Focus: Evidence", "Focus: Confidence"]
+: [];
+
 const header = [
 "Recording URL",
 "Date of uploading (IST)",
@@ -95,6 +103,7 @@ const header = [
 "Duration",
 "Duration (sec)",
 "Summary",
+...focusHeaders,
 ...dimOrder.map((k) => dimMeta.get(k)!.name),
 "Strengths",
 "What was lacking",
@@ -128,6 +137,13 @@ const recs = parseRecommendations(r.recommendations_json)
 // One cell per compliance check
 const complianceCells = SCRIPT_COMPLIANCE_CHECKS.map((c) => compliance[c.key] ?? "—");
 
+const f = parsedFocus[i];
+const focusCells = hasFocusCols
+? f
+? [f.question, f.applicable ? "Yes" : "No", f.category, clip(f.finding), clip(f.evidence), f.confidence]
+: ["", "", "", "", "", ""]
+: [];
+
 // Convert overall_score (1-5) to percentage
 const qualityPct = r.overall_score != null ? Math.round((r.overall_score / 5) * 100) : "";
 
@@ -140,6 +156,7 @@ reviewLabel(r.review_status),
 hasDur ? formatDuration(r.duration_seconds) : "",
 hasDur ? r.duration_seconds : "",
 clip(r.summary ?? ""),
+...focusCells,
 ...dimCells.map(clip),
 clip(r.strengths ?? ""),
 clip(r.what_was_lacking ?? ""),
@@ -161,6 +178,7 @@ ws["!cols"] = [
 { wch: 10 },
 { wch: 14 },
 { wch: 50 },
+...(hasFocusCols ? [{ wch: 36 }, { wch: 10 }, { wch: 28 }, { wch: 50 }, { wch: 50 }, { wch: 11 }] : []),
 ...dimOrder.map(() => ({ wch: 44 })),
 { wch: 50 },
 { wch: 50 },
