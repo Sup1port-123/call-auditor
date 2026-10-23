@@ -1,4 +1,5 @@
 // Ported from rubric.py  -  keep in sync if either side changes.
+import { buildFocusPromptBlock, focusJsonShape, hasFocus } from "./focus";
 
 export type RubricDimension = {
   key: string;
@@ -479,8 +480,10 @@ export function buildSystemPrompt(opts: {
     opts.rubric && opts.rubric.length > 0 ? opts.rubric : RUBRIC_DIMENSIONS;
   const p = AUDIT_PRESETS[opts.preset ?? "general"] ?? AUDIT_PRESETS.general;
   const parts = [p.instructions];
-  if (opts.customFocus?.trim()) {
-    parts.push(`Additional reviewer focus: ${opts.customFocus.trim()}`);
+  const focusOn = hasFocus(opts.customFocus);
+  if (focusOn) {
+    // Special audit question → dedicated focus_result in the output
+    parts.push(buildFocusPromptBlock(opts.customFocus!));
   }
   const focus_block = parts.join("\n\n");
   const strictness_block =
@@ -494,9 +497,9 @@ export function buildSystemPrompt(opts: {
 
   // Build dynamic compliance JSON shape and optional call_reason field
   const complianceJsonShape = buildComplianceJsonShape(checks);
-  const callReasonField = inbound
+  const callReasonField = (inbound
     ? `,\n  "call_reason": "<brief category of what the GP was calling about - e.g. 'loan status query', 'app login issue', 'payout delay', 'callback request', 'product information', 'complaint'>"`
-    : "";
+    : "") + (focusOn ? focusJsonShape() : "");
 
   // Determine overall_score instruction based on rubric total max.
   // For Gro-Score (total max = 100): overall is the arithmetic sum of dimension scores.
