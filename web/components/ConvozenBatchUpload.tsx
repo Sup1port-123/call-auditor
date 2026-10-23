@@ -1,5 +1,6 @@
 "use client";
 import { useState, useRef } from "react";
+import { FOCUS_PRESETS } from "@/lib/focus-presets";
 
 interface Agent { id: string; name: string; }
 interface BatchResult { batchId: string; total: number; completed: number; failed: number; skipped: number; }
@@ -162,8 +163,37 @@ export function ConvozenBatchUpload({ agents }: { agents: Agent[] }) {
         )}
 
         <div>
-          <label className="block text-xs font-semibold uppercase tracking-widest text-zinc-400 mb-1.5">Audit focus (optional)</label>
-          <input type="text" value={customFocus} onChange={(e) => setCustomFocus(e.target.value)} placeholder="e.g. Focus on call resolution and language quality" className="w-full rounded-xl border border-zinc-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400" />
+          <label className="block text-xs font-semibold uppercase tracking-widest text-zinc-400 mb-1.5">Special audit question (optional)</label>
+          <p className="text-xs text-zinc-500 mb-2">
+            Otis will still score quality normally, and will also answer this question for every call and
+            produce a batch report with the top reasons, % share, examples and fixes.
+          </p>
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {FOCUS_PRESETS.map((p) => {
+              const active = customFocus.trim() === p.question;
+              return (
+                <button
+                  key={p.key}
+                  type="button"
+                  onClick={() => setCustomFocus(active ? "" : p.question)}
+                  className={`rounded-full border px-3 py-1 text-xs transition ${
+                    active
+                      ? "border-violet-500 bg-violet-600 text-white"
+                      : "border-zinc-200 bg-white text-zinc-600 hover:border-violet-300 hover:text-violet-700"
+                  }`}
+                >
+                  {p.label}
+                </button>
+              );
+            })}
+          </div>
+          <textarea
+            value={customFocus}
+            onChange={(e) => setCustomFocus(e.target.value)}
+            rows={2}
+            placeholder="Pick one above, or type your own — e.g. Why are customers asking for a callback?"
+            className="w-full rounded-xl border border-zinc-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400"
+          />
         </div>
 
         <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-xs text-amber-800">
