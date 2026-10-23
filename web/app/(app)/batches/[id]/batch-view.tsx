@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Batch } from "@/lib/types/batch";
 import type { BatchAuditRow } from "./page";
+import FocusReportCard from "@/components/FocusReportCard";
 
 type Counts = {
   queued: number;
@@ -155,6 +156,12 @@ export default function BatchView({
           <p className="text-xs text-zinc-500 mt-3">Re-runs only the failed recordings — already-transcribed ones are just re-scored. Keep this tab open while they process.</p>
         )}
       </div>
+
+      {(batch as any).custom_focus && (
+        <div className="mb-8">
+          <FocusReportCard key={counts.done ? "done" : "live"} batchId={batch.id} />
+        </div>
+      )}
 
       <div className="rounded-3xl bg-[var(--paper)] px-5 py-4 mb-3 flex flex-wrap items-center gap-3">
         <input type="text" placeholder="Search Call ID…" value={filterCallId} onChange={(e) => setFilterCallId(e.target.value)}
