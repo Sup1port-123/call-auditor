@@ -21,7 +21,7 @@ export async function getOrBuildBatchFocusReport(
 
   const { data: batch } = await db
     .from("batches")
-    .select("id, custom_focus, agent_id, focus_report_json")
+    .select("id, custom_focus, agent_id")
     .eq("id", batchId)
     .maybeSingle();
 
@@ -61,10 +61,20 @@ export async function getOrBuildBatchFocusReport(
   }
   if (rows.length === 0) return null;
 
-  // Serve cache if it already covers every completed focus audit
-  if (!opts.force && batch.focus_report_json) {
+  // Serve cache if it already covers every completed focus audit.
+  // The cache column is optional — if it does not exist yet, we simply rebuild.
+  let cachedRaw: string | null = null;
+  if (!opts.force) {
+    const { data: cacheRow, error: cacheErr } = await db
+      .from("batches")
+      .select("focus_report_json")
+      .eq("id", batchId)
+      .maybeSingle();
+    if (!cacheErr) cachedRaw = (cacheRow as { focus_report_json?: string | null } | null)?.focus_report_json ?? null;
+  }
+  if (cachedRaw) {
     try {
-      const cached = JSON.parse(batch.focus_report_json) as FocusReport;
+      const cached = JSON.parse(cachedRaw) as FocusReport;
       if (cached?.totalCalls === rows.length && cached.reasons) return cached;
     } catch {
       /* rebuild */
@@ -75,10 +85,12 @@ export async function getOrBuildBatchFocusReport(
   const question = preset ? preset.question : String(batch.custom_focus).trim();
   const report = await buildFocusReport(question, rows);
 
-  await db
+  // Best-effort cache write (ignored if the focus_report_json column is missing)
+  const { error: saveErr } = await db
     .from("batches")
     .update({ focus_report_json: JSON.stringify(report) })
     .eq("id", batchId);
+  if (saveErr) console.warn("[otis] focus report cache not saved:", saveErr.message);
 
   return report;
 }
