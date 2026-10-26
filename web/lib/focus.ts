@@ -234,7 +234,7 @@ export async function buildFocusReport(
 
   const mergeRule = isPreset
     ? `The reasons come from a fixed list — do NOT merge or rename them. merge_map must map every reason to itself.`
-    : `First MERGE reasons that mean the same thing into ONE clear reason name in plain-English sentence case (e.g. "Customer requested senior", "Customer requested human agent" and "Customer requested transfer" → "Customer asked for a senior"; "Escalation required" and "Escalation for further investigation" → "Escalation needed"). Keep genuinely different reasons separate. Every original reason must appear exactly once as a key in merge_map.`;
+    : `First MERGE reasons that mean the same thing into ONE clear reason name in plain-English sentence case (e.g. "Customer requested senior", "Customer requested human agent" and "Customer requested transfer" → "Customer asked for a senior"; "Escalation required" and "Escalation for further investigation" → "Escalation needed"). Merge aggressively: if two reasons would be fixed by the same action, they are ONE reason. Any request by the customer to speak to someone else (senior, supervisor, human agent, real person, customer service, another team, "transfer me") MUST be merged into one reason "Customer asked for a senior". Aim for 3-6 merged reasons in total. Keep reasons separate only when the fix is genuinely different. Every original reason must appear exactly once as a key in merge_map.`;
 
   const prompt = `You are a senior call-centre quality analyst for GroMo (Indian fintech). An audit batch was run with this special question:
 "${question}"
