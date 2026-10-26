@@ -3,13 +3,9 @@
 // SPECIAL AUDIT FOCUS
 // When a batch has an "Audit focus" (e.g. "Why are calls getting transferred?"),
 // Otis returns a dedicated answer per call (focus_result) on top of the normal
-// quality audit, and builds a batch-level Focus Report that groups the findings
-// into reasons with counts, % share, agents affected, example calls, root-cause
-// explanation and recommended fixes.
-//
-// Works for ANY question — presets give fixed categories for clean grouping;
-// free-text questions let the AI create short category labels that are then
-// grouped across the batch.
+// quality audit, and builds a batch-level Focus Report:
+//   Reason | Calls | Share  (similar reasons merged, 1-call reasons grouped as "Other")
+// plus root cause, fix, example calls and recommended actions.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { FOCUS_PRESETS, type FocusPreset } from "./focus-presets";
@@ -54,7 +50,7 @@ export function buildFocusPromptBlock(customFocus: string): string {
   const question = preset ? preset.question : customFocus.trim();
   const catLine = preset
     ? `Choose "category" from EXACTLY one of: ${preset.categories.map((c) => `"${c}"`).join(", ")}.`
-    : `Set "category" to a SHORT reason label (2-6 words, Title Case, generic enough to group with other calls — e.g. "Agent Knowledge Gap", "Customer Requested Senior"). Do not put call-specific details in the category.`;
+    : `Set "category" to a SHORT, plain-English reason in sentence case (2-6 words, generic enough to group with other calls — e.g. "Customer asked for a senior", "Customer asked for a callback", "Payout query delayed"). Do not put call-specific details in the category.`;
 
   return `SPECIAL AUDIT QUESTION (answer separately in "focus_result"):
 "${question}"
@@ -132,6 +128,8 @@ export type FocusReason = {
   count: number;
   percent: number; // share of applicable calls
   avgScore: number | null;
+  /** original per-call reason names merged into this one */
+  includes?: string[];
   /** AI-written root cause explanation for this reason */
   rootCause: string;
   /** AI-written fix for this reason */
@@ -153,26 +151,137 @@ export type FocusReport = {
   lowConfidenceCalls: number;
 };
 
+export type ReasonTableRow = { label: string; count: number; percent: number; isOther: boolean };
+
 /**
- * Builds the batch-level report. Counts / percentages / agent splits are
- * computed in code (always exact). The AI only writes the narrative —
- * headline, root cause per reason, fixes and recommendations.
- * Cost: ONE extra LLM call per batch.
+ * The summary table shown on Otis and in the email:
+ *   Reason | Calls | Share
+ * Reasons with only 1 call are folded into one "Other, 1 call each: …" row
+ * (only when there are 2 or more of them).
+ */
+export function summarizeReasons(reasons: FocusReason[]): ReasonTableRow[] {
+  const singles = reasons.filter((r) => r.count === 1);
+  if (singles.length < 2) {
+    return reasons.map((r) => ({ label: r.category, count: r.count, percent: r.percent, isOther: false }));
+  }
+  const main = reasons
+    .filter((r) => r.count > 1)
+    .map((r) => ({ label: r.category, count: r.count, percent: r.percent, isOther: false }));
+  const lower = (s: string) => (s ? s.charAt(0).toLowerCase() + s.slice(1) : s);
+  const otherPct = Math.round(singles.reduce((s, r) => s + r.percent, 0) * 10) / 10;
+  main.push({
+    label: `Other, 1 call each: ${singles.map((r) => lower(r.category)).join(", ")}`,
+    count: singles.length,
+    percent: otherPct,
+    isOther: true,
+  });
+  return main;
+}
+
+function groupBy<T>(items: T[], key: (t: T) => string): Map<string, T[]> {
+  const m = new Map<string, T[]>();
+  for (const it of items) {
+    const k = key(it);
+    if (!m.has(k)) m.set(k, []);
+    m.get(k)!.push(it);
+  }
+  return m;
+}
+
+/**
+ * Builds the batch-level report.
+ * ONE extra LLM call per batch: it merges near-duplicate reasons (for free-text
+ * questions) and writes the narrative. Counts / percentages / headline are
+ * always computed in code so the numbers are exact.
  */
 export async function buildFocusReport(
   question: string,
   rows: FocusAuditRow[],
 ): Promise<FocusReport> {
   const applicable = rows.filter((r) => r.focus.applicable);
-  const groups = new Map<string, FocusAuditRow[]>();
-  for (const r of applicable) {
-    const k = r.focus.category || "Other";
-    if (!groups.has(k)) groups.set(k, []);
-    groups.get(k)!.push(r);
+  const base = {
+    question,
+    generatedAt: new Date().toISOString(),
+    totalCalls: rows.length,
+    applicableCalls: applicable.length,
+    notApplicableCalls: rows.length - applicable.length,
+    lowConfidenceCalls: applicable.filter((r) => r.focus.confidence === "low").length,
+  };
+
+  if (applicable.length === 0) {
+    return {
+      ...base,
+      headline: `None of the ${rows.length} audited calls matched the question.`,
+      keyInsight: "The question did not apply to any call in this batch.",
+      reasons: [],
+      agents: [],
+      recommendations: [],
+    };
   }
 
+  // 1. Raw groups by the per-call reason
+  const rawGroups = groupBy(applicable, (r) => r.focus.category || "Other");
+  const rawSorted = [...rawGroups.entries()].sort((a, b) => b[1].length - a[1].length);
+  const isPreset = !!getFocusPreset(question);
+
+  const digest = rawSorted
+    .map(([cat, list]) => {
+      const lines = list.slice(0, 25).map((x) => `  - ${x.focus.finding}`).join("\n");
+      return `REASON: ${cat} (${list.length} calls)\n${lines}`;
+    })
+    .join("\n\n")
+    .slice(0, 60000);
+
+  const mergeRule = isPreset
+    ? `The reasons come from a fixed list — do NOT merge or rename them. merge_map must map every reason to itself.`
+    : `First MERGE reasons that mean the same thing into ONE clear reason name in plain-English sentence case (e.g. "Customer requested senior", "Customer requested human agent" and "Customer requested transfer" → "Customer asked for a senior"; "Escalation required" and "Escalation for further investigation" → "Escalation needed"). Keep genuinely different reasons separate. Every original reason must appear exactly once as a key in merge_map.`;
+
+  const prompt = `You are a senior call-centre quality analyst for GroMo (Indian fintech). An audit batch was run with this special question:
+"${question}"
+
+Per-call findings grouped by the reason each call was tagged with:
+
+${digest}
+
+${mergeRule}
+
+Then write a sharp, evidence-based analysis for the MERGED reasons. Do not write any numbers or percentages — the system adds exact counts itself.
+
+Return VALID JSON ONLY:
+{
+  "merge_map": { "<original reason exactly as given>": "<merged reason name>" },
+  "key_insight": "<2-3 sentences on the real underlying root-cause pattern across calls (no numbers)>",
+  "reasons": { "<merged reason name>": { "root_cause": "<1-2 sentences: WHY this keeps happening>", "fix": "<1 concrete action to reduce it>" } },
+  "recommendations": ["<3-5 prioritised, specific actions for the team/training/process>"]
+}`;
+
+  type Narrative = {
+    merge_map?: Record<string, string>;
+    key_insight?: string;
+    reasons?: Record<string, { root_cause?: string; fix?: string }>;
+    recommendations?: string[];
+  };
+  let parsed: Narrative = {};
+  try {
+    const text = await callNarrativeLLM(prompt);
+    parsed = JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim()) as Narrative;
+  } catch (e) {
+    console.error("[otis] focus report narrative failed:", e);
+  }
+
+  // 2. Apply merge map (case-insensitive), then regroup with exact counts
+  const mm = new Map<string, string>();
+  for (const [k, val] of Object.entries(parsed.merge_map ?? {})) {
+    if (typeof val === "string" && val.trim()) mm.set(k.trim().toLowerCase(), val.trim());
+  }
+  const mergedOf = (cat: string) => mm.get(cat.trim().toLowerCase()) ?? cat;
+
+  const groups = groupBy(applicable, (r) => mergedOf(r.focus.category || "Other"));
   const sorted = [...groups.entries()].sort((a, b) => b[1].length - a[1].length);
   const confRank = { high: 0, medium: 1, low: 2 } as const;
+  const lookup = (name: string) =>
+    parsed.reasons?.[name] ??
+    Object.entries(parsed.reasons ?? {}).find(([k]) => k.toLowerCase() === name.toLowerCase())?.[1];
 
   const reasons: FocusReason[] = sorted.map(([category, list]) => {
     const scores = list.map((x) => x.overallScore).filter((s): s is number => typeof s === "number");
@@ -180,101 +289,43 @@ export async function buildFocusReport(
       .sort((a, b) => confRank[a.focus.confidence] - confRank[b.focus.confidence])
       .slice(0, 3)
       .map((x) => ({ auditId: x.auditId, callId: x.callId, finding: x.focus.finding, evidence: x.focus.evidence }));
+    const n = lookup(category);
     return {
       category,
       count: list.length,
-      percent: applicable.length ? Math.round((list.length / applicable.length) * 1000) / 10 : 0,
+      percent: Math.round((list.length / applicable.length) * 1000) / 10,
       avgScore: scores.length ? Math.round((scores.reduce((s, v) => s + v, 0) / scores.length) * 10) / 10 : null,
-      rootCause: "",
-      fix: "",
+      includes: [...new Set(list.map((x) => x.focus.category))],
+      rootCause: n?.root_cause ?? "",
+      fix: n?.fix ?? "",
       examples,
     };
   });
 
-  // Agent breakdown
-  const byAgent = new Map<string, FocusAuditRow[]>();
-  for (const r of applicable) {
-    const a = r.agentName || "Unknown agent";
-    if (!byAgent.has(a)) byAgent.set(a, []);
-    byAgent.get(a)!.push(r);
-  }
-  const agents = [...byAgent.entries()]
+  // Agent breakdown (on merged reasons)
+  const agents = [...groupBy(applicable, (r) => r.agentName || "Unknown agent").entries()]
     .map(([agentName, list]) => {
       const c = new Map<string, number>();
-      list.forEach((x) => c.set(x.focus.category, (c.get(x.focus.category) ?? 0) + 1));
+      list.forEach((x) => {
+        const k = mergedOf(x.focus.category);
+        c.set(k, (c.get(k) ?? 0) + 1);
+      });
       const top = [...c.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "—";
       return { agentName, applicable: list.length, topCategory: top };
     })
     .sort((a, b) => b.applicable - a.applicable);
 
-  const report: FocusReport = {
-    question,
-    generatedAt: new Date().toISOString(),
-    totalCalls: rows.length,
-    applicableCalls: applicable.length,
-    notApplicableCalls: rows.length - applicable.length,
-    headline: "",
-    keyInsight: "",
+  const top = reasons[0];
+  const headline = `${applicable.length} of ${rows.length} calls matched. Top reason: ${top.category} — ${top.count} calls (${top.percent}%).`;
+
+  return {
+    ...base,
+    headline,
+    keyInsight: parsed.key_insight ?? "",
     reasons,
     agents,
-    recommendations: [],
-    lowConfidenceCalls: applicable.filter((r) => r.focus.confidence === "low").length,
+    recommendations: Array.isArray(parsed.recommendations) ? parsed.recommendations : [],
   };
-
-  if (applicable.length === 0) {
-    report.headline = `None of the ${rows.length} audited calls matched the question.`;
-    report.keyInsight = "The question did not apply to any call in this batch.";
-    return report;
-  }
-
-  // ── Narrative via LLM (best-effort; numbers above stay exact even if this fails)
-  const findingsDigest = sorted
-    .map(([cat, list]) => {
-      const lines = list.slice(0, 40).map((x) => `  - ${x.focus.finding}`).join("\n");
-      return `REASON: ${cat} — ${list.length} calls (${Math.round((list.length / applicable.length) * 100)}%)\n${lines}`;
-    })
-    .join("\n\n")
-    .slice(0, 60000);
-
-  const prompt = `You are a senior call-centre quality analyst for GroMo (Indian fintech). An audit batch was run with this special question:
-"${question}"
-
-${applicable.length} of ${rows.length} calls were relevant. Below are the per-call findings grouped by reason (counts are exact — do not change them):
-
-${findingsDigest}
-
-Write a sharp, evidence-based report. Return VALID JSON ONLY:
-{
-  "headline": "<one sentence answering the question for the whole batch, citing the top reason and its %>",
-  "key_insight": "<2-3 sentences on the real underlying root cause pattern across calls>",
-  "reasons": { "<reason name exactly as given>": { "root_cause": "<1-2 sentences: WHY this keeps happening>", "fix": "<1 concrete action to reduce it>" } },
-  "recommendations": ["<3-5 prioritised, specific actions for the team/training/process>"]
-}`;
-
-  try {
-    const text = await callNarrativeLLM(prompt);
-    const parsed = JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim()) as {
-      headline?: string;
-      key_insight?: string;
-      reasons?: Record<string, { root_cause?: string; fix?: string }>;
-      recommendations?: string[];
-    };
-    report.headline = parsed.headline ?? "";
-    report.keyInsight = parsed.key_insight ?? "";
-    report.recommendations = Array.isArray(parsed.recommendations) ? parsed.recommendations : [];
-    for (const r of report.reasons) {
-      const n = parsed.reasons?.[r.category] ??
-        Object.entries(parsed.reasons ?? {}).find(([k]) => k.toLowerCase() === r.category.toLowerCase())?.[1];
-      r.rootCause = n?.root_cause ?? "";
-      r.fix = n?.fix ?? "";
-    }
-  } catch (e) {
-    console.error("[otis] focus report narrative failed:", e);
-    const top = report.reasons[0];
-    report.headline = `Top reason: ${top.category} — ${top.count} of ${applicable.length} calls (${top.percent}%).`;
-  }
-
-  return report;
 }
 
 async function callNarrativeLLM(prompt: string): Promise<string> {
@@ -285,7 +336,7 @@ async function callNarrativeLLM(prompt: string): Promise<string> {
       const res = await ai.models.generateContent({
         model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
         contents: [{ role: "user", parts: [{ text: prompt }] }],
-        config: { responseMimeType: "application/json", temperature: 0.3 },
+        config: { responseMimeType: "application/json", temperature: 0.2 },
       });
       if (res.text) return res.text;
     } catch (e) {
@@ -298,7 +349,7 @@ async function callNarrativeLLM(prompt: string): Promise<string> {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
       body: JSON.stringify({
         model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-        temperature: 0.3,
+        temperature: 0.2,
         response_format: { type: "json_object" },
         messages: [{ role: "user", content: prompt }],
       }),
@@ -321,45 +372,42 @@ function esc(s: string): string {
 }
 
 export function renderFocusReportHtml(r: FocusReport): string {
-  const rows = r.reasons
+  const table = summarizeReasons(r.reasons)
     .map(
       (x, i) => `<tr style="background:${i % 2 ? "#ffffff" : "#f5f3ff"}">
-  <td style="padding:8px;border:1px solid #e4e4e7;"><b>${esc(x.category)}</b></td>
+  <td style="padding:8px;border:1px solid #e4e4e7;">${x.isOther ? esc(x.label) : `<b>${esc(x.label)}</b>`}</td>
   <td style="padding:8px;border:1px solid #e4e4e7;text-align:center;">${x.count}</td>
   <td style="padding:8px;border:1px solid #e4e4e7;text-align:center;"><b>${x.percent}%</b></td>
-  <td style="padding:8px;border:1px solid #e4e4e7;">${esc(x.rootCause || "—")}</td>
-  <td style="padding:8px;border:1px solid #e4e4e7;">${esc(x.fix || "—")}</td>
 </tr>`,
     )
     .join("");
 
-  const examples = r.reasons
-    .slice(0, 3)
+  const why = r.reasons
+    .filter((x) => x.count > 1 && (x.rootCause || x.fix))
     .map(
-      (x) => `<p style="margin:10px 0 4px;"><b>${esc(x.category)}</b></p>` +
-        x.examples
-          .map((e) => `<p style="margin:2px 0 2px 12px;font-size:12px;color:#3f3f46;">• ${e.callId ? `<b>Call ${esc(String(e.callId))}:</b> ` : ""}${esc(e.finding)}${e.evidence ? `<br><i style="color:#71717a;">“${esc(e.evidence)}”</i>` : ""}</p>`)
-          .join(""),
+      (x) => `<p style="margin:8px 0 2px;"><b>${esc(x.category)}</b></p>` +
+        (x.rootCause ? `<p style="margin:0 0 2px 12px;font-size:13px;color:#3f3f46;">Why: ${esc(x.rootCause)}</p>` : "") +
+        (x.fix ? `<p style="margin:0 0 2px 12px;font-size:13px;color:#047857;">Fix: ${esc(x.fix)}</p>` : ""),
     )
     .join("");
 
   const recs = r.recommendations.map((x) => `<li style="margin:4px 0;">${esc(x)}</li>`).join("");
 
-  return `<div style="font-family:Arial,sans-serif;margin:20px 0;border:1px solid #ddd6fe;border-radius:10px;overflow:hidden;">
+  return `<div style="font-family:Arial,sans-serif;margin:20px 0;border:1px solid #ddd6fe;border-radius:10px;overflow:hidden;background:#fff;">
   <div style="background:#5b21b6;color:#fff;padding:14px 16px;">
     <div style="font-size:11px;letter-spacing:1px;opacity:.8;">SPECIAL AUDIT FOCUS REPORT</div>
     <div style="font-size:16px;font-weight:bold;margin-top:4px;">${esc(r.question)}</div>
   </div>
   <div style="padding:14px 16px;">
     <p style="font-size:15px;margin:0 0 8px;"><b>${esc(r.headline)}</b></p>
-    <p style="margin:0 0 12px;color:#3f3f46;">${esc(r.keyInsight)}</p>
-    <p style="font-size:12px;color:#71717a;margin:0 0 10px;">Relevant calls: <b>${r.applicableCalls}</b> of ${r.totalCalls} audited · Not applicable: ${r.notApplicableCalls}${r.lowConfidenceCalls ? ` · Low-confidence findings: ${r.lowConfidenceCalls}` : ""}</p>
+    ${r.keyInsight ? `<p style="margin:0 0 12px;color:#3f3f46;">${esc(r.keyInsight)}</p>` : ""}
     <table style="width:100%;border-collapse:collapse;font-size:13px;">
-      <tr style="background:#1b2a4a;color:#fff;"><th style="padding:8px;text-align:left;">Reason</th><th style="padding:8px;">Calls</th><th style="padding:8px;">Share</th><th style="padding:8px;text-align:left;">Why it happens</th><th style="padding:8px;text-align:left;">Fix</th></tr>
-      ${rows}
+      <tr style="background:#1b2a4a;color:#fff;"><th style="padding:8px;text-align:left;">Reason</th><th style="padding:8px;width:70px;">Calls</th><th style="padding:8px;width:80px;">Share</th></tr>
+      ${table}
     </table>
+    <p style="font-size:11px;color:#71717a;margin:6px 0 0;">Share = % of the ${r.applicableCalls} relevant calls · Not applicable: ${r.notApplicableCalls}</p>
+    ${why ? `<p style="margin:16px 0 4px;"><b>Why it happens &amp; how to fix</b></p>${why}` : ""}
     ${recs ? `<p style="margin:16px 0 4px;"><b>Recommended actions</b></p><ol style="margin:0;padding-left:20px;">${recs}</ol>` : ""}
-    ${examples ? `<p style="margin:16px 0 4px;"><b>Example calls</b></p>${examples}` : ""}
   </div>
 </div>`;
 }
