@@ -4,7 +4,7 @@
 // Renders nothing when the batch has no audit focus.
 
 import { useCallback, useEffect, useState } from "react";
-import type { FocusReport } from "@/lib/focus";
+import { summarizeReasons, type FocusReport } from "@/lib/focus";
 
 export default function FocusReportCard({ batchId }: { batchId: string }) {
   const [report, setReport] = useState<FocusReport | null>(null);
@@ -86,6 +86,29 @@ export default function FocusReportCard({ batchId }: { batchId: string }) {
             {report.lowConfidenceCalls > 0 && <> · Low-confidence: {report.lowConfidenceCalls}</>}
           </p>
         </div>
+
+        <div className="overflow-hidden rounded-xl border border-zinc-200">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-[#1b2a4a] text-left text-white">
+                <th className="px-4 py-2.5 font-semibold">Reason</th>
+                <th className="px-4 py-2.5 font-semibold w-24">Calls</th>
+                <th className="px-4 py-2.5 font-semibold w-24">Share</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summarizeReasons(report.reasons).map((row, i) => (
+                <tr key={row.label} className={i % 2 ? "bg-white" : "bg-violet-50/60"}>
+                  <td className={"px-4 py-2.5 " + (row.isOther ? "text-zinc-600" : "font-medium text-zinc-900")}>{row.label}</td>
+                  <td className="px-4 py-2.5 tabular-nums">{row.count}</td>
+                  <td className="px-4 py-2.5 tabular-nums font-semibold text-violet-700">{row.percent}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="text-xs font-semibold uppercase tracking-widest text-zinc-400">Details by reason</div>
 
         <div className="space-y-3">
           {report.reasons.map((r) => (
