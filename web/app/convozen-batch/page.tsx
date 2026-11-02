@@ -20,7 +20,7 @@ export default async function ConvozenBatchPage() {
           </span>
         </h1>
         <p className="text-zinc-500 mt-3 max-w-xl text-sm">
-          Upload a Convozen call_details CSV export. Otis reads the pre-generated
+          Upload a Convozen call_details export (CSV or Excel). Otis reads the pre-generated
           summaries and scores every call through Gemini — no recording URL or
           transcription step needed.
         </p>
@@ -28,7 +28,7 @@ export default async function ConvozenBatchPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-10">
         {[
-          { step: "1", icon: "📤", title: "Export from Convozen", desc: "Go to Convozen Reports and download the call_details CSV for the date range you want." },
+          { step: "1", icon: "📤", title: "Export from Convozen", desc: "Go to Convozen Reports and download the call_details CSV or Excel file for the date range you want." },
           { step: "2", icon: "🤖", title: "Otis reads summaries", desc: "Otis extracts the summary column and sends each one directly to Gemini. No audio file required." },
           { step: "3", icon: "📊", title: "Scores appear in Batches", desc: "Each call gets a QA score, compliance check, strengths, and improvement notes." },
         ].map((s) => (

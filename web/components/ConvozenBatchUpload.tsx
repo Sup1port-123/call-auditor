@@ -1,6 +1,7 @@
 "use client";
 import { useState, useRef } from "react";
 import { FOCUS_PRESETS } from "@/lib/focus-presets";
+import { fileExtension, SPREADSHEET_EXTENSIONS } from "@/lib/upload-formats";
 
 interface Agent { id: string; name: string; }
 interface BatchResult { batchId: string; total: number; completed: number; failed: number; skipped: number; }
@@ -28,6 +29,20 @@ function parseCSVClient(text: string): string[][] {
   return rows;
 }
 
+// Excel/ODS exports are read with SheetJS (first sheet only) into the same
+// row arrays the CSV parser returns; they're re-serialised as CSV below.
+async function readSpreadsheetRows(file: File): Promise<string[][]> {
+  if (fileExtension(file.name) === "csv") return parseCSVClient(await file.text());
+  const XLSX = await import("xlsx");
+  const wb = XLSX.read(new Uint8Array(await file.arrayBuffer()), { type: "array" });
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  if (!sheet) return [];
+  const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "", raw: false });
+  return rows
+    .map((r) => r.map((c) => String(c ?? "")))
+    .filter((r) => r.some((c) => c !== ""));
+}
+
 function escapeCSVField(val: string): string {
   if (val.includes('"') || val.includes(',') || val.includes('\n') || val.includes('\r')) {
     return '"' + val.replace(/"/g, '""') + '"';
@@ -53,20 +68,19 @@ export function ConvozenBatchUpload({ agents }: { agents: Agent[] }) {
 
   function handleFile(f: File | null) {
     if (!f) return;
-    if (!f.name.endsWith(".csv")) { setError("Please upload a .csv file from Convozen."); return; }
+    if (!SPREADSHEET_EXTENSIONS.includes(fileExtension(f.name))) { setError("Please upload a Convozen export (.csv, .xlsx, .xls or .ods)."); return; }
     setError(null); setFile(f);
     if (!batchName) setBatchName("Convozen Inbound - " + new Date().toISOString().slice(0, 10));
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!file) { setError("Please select a CSV file."); return; }
+    if (!file) { setError("Please select a Convozen export file."); return; }
     setLoading(true); setError(null); setResult(null); setProgress(null);
 
     try {
-      const text = await file.text();
-      const allRows = parseCSVClient(text);
-      if (allRows.length < 2) { setError("CSV file appears empty or could not be parsed."); setLoading(false); return; }
+      const allRows = await readSpreadsheetRows(file);
+      if (allRows.length < 2) { setError("File appears empty or could not be parsed."); setLoading(false); return; }
 
       const headers = allRows[0];
       const headerLine = headers.map(escapeCSVField).join(',');
@@ -98,7 +112,7 @@ export function ConvozenBatchUpload({ agents }: { agents: Agent[] }) {
       for (let i = 0; i < chunks.length; i++) {
         setProgress({ chunk: i + 1, total: chunks.length });
         const csvBlob = new Blob([chunks[i]], { type: 'text/csv' });
-        const chunkFile = new File([csvBlob], file.name, { type: 'text/csv' });
+        const chunkFile = new File([csvBlob], file.name.replace(/\.[^.]+$/, "") + ".csv", { type: 'text/csv' });
         const fd = new FormData();
         fd.append("file", chunkFile);
         if (agentId) fd.append("agentId", agentId);
@@ -126,7 +140,7 @@ export function ConvozenBatchUpload({ agents }: { agents: Agent[] }) {
       <div className="flex items-center gap-3 mb-6">
         <div className="w-10 h-10 rounded-2xl bg-violet-100 flex items-center justify-center text-xl">🗂️</div>
         <div>
-          <div className="font-display text-lg font-bold">Convozen CSV Audit</div>
+          <div className="font-display text-lg font-bold">Convozen Export Audit</div>
           <div className="text-xs text-zinc-500">Upload call_details or AI Call Logs export — any size, auto-split</div>
         </div>
       </div>
@@ -139,11 +153,11 @@ export function ConvozenBatchUpload({ agents }: { agents: Agent[] }) {
           onDrop={(e) => { e.preventDefault(); setDragging(false); handleFile(e.dataTransfer.files?.[0] ?? null); }}
           onClick={() => fileRef.current?.click()}
         >
-          <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={(e) => handleFile(e.target.files?.[0] ?? null)} />
+          <input ref={fileRef} type="file" accept={SPREADSHEET_EXTENSIONS.map((e) => `.${e}`).join(",")} className="hidden" onChange={(e) => handleFile(e.target.files?.[0] ?? null)} />
           {file ? (
             <><div className="text-2xl mb-1">✅</div><div className="font-medium text-sm text-emerald-700">{file.name}</div><div className="text-xs text-zinc-400 mt-1">{(file.size / 1024).toFixed(1)} KB — click to change</div></>
           ) : (
-            <><div className="text-2xl mb-1">📂</div><div className="text-sm text-zinc-600 font-medium">Drop Convozen CSV here or click to browse</div><div className="text-xs text-zinc-400 mt-1">Supports call_details (summary) and AI Call Logs (chatHistory) · Any file size</div></>
+            <><div className="text-2xl mb-1">📂</div><div className="text-sm text-zinc-600 font-medium">Drop Convozen export here (CSV, XLSX, XLS, ODS) or click to browse</div><div className="text-xs text-zinc-400 mt-1">Supports call_details (summary) and AI Call Logs (chatHistory) · Any file size</div></>
           )}
         </div>
 
