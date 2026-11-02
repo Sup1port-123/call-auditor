@@ -9,6 +9,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { finalizeAudit } from "@/lib/finalize";
+import { formatKartaTranscript } from "@/lib/karta-transcript";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -93,8 +94,11 @@ function newId(): string {
   return `${stamp}-${Math.random().toString(16).slice(2, 8)}`;
 }
 
+// The full transcript when Karta sends one (far better for scoring than the
+// summary); otherwise the pre-generated summary.
 function getSummary(c: KartaCall): string {
   return (
+    formatKartaTranscript(c.transcript_text) ??
     String(c.summary ?? c.conversation_summary ?? c.call_summary ?? "").trim()
   );
 }

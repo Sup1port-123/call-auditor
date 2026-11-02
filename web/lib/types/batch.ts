@@ -92,3 +92,27 @@ export function detectDisconnectReasonColumn(headers: string[]): string | null {
   }
   return null;
 }
+
+// Exact matches only: "transcript_link" (a URL) must not be mistaken for the
+// transcript text itself.
+const TRANSCRIPT_COLUMN_PATTERNS = ["transcripttext", "transcript", "fulltranscript"];
+
+const TALKTIME_COLUMN_PATTERNS = ["talktimeduration", "talktime", "talktimeseconds"];
+
+export function detectTranscriptColumn(headers: string[]): string | null {
+  const normalized = headers.map((h) => ({ raw: h, norm: normalizeHeader(h) }));
+  for (const pattern of TRANSCRIPT_COLUMN_PATTERNS) {
+    const exact = normalized.find((h) => h.norm === pattern);
+    if (exact) return exact.raw;
+  }
+  return null;
+}
+
+export function detectTalktimeColumn(headers: string[]): string | null {
+  const normalized = headers.map((h) => ({ raw: h, norm: normalizeHeader(h) }));
+  for (const pattern of TALKTIME_COLUMN_PATTERNS) {
+    const exact = normalized.find((h) => h.norm === pattern);
+    if (exact) return exact.raw;
+  }
+  return null;
+}

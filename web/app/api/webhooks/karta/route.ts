@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { submitTranscription } from "@/lib/auditor";
 import { finalizeAudit } from "@/lib/finalize";
+import { formatKartaTranscript } from "@/lib/karta-transcript";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -22,7 +23,10 @@ type KartaWebhookPayload = {
     from_number?: string;
     duration?: number; // total call duration in seconds (if sent by Karta)
     talk_time?: number; // actual talk time in seconds (if sent by Karta)
+    transcript_text?: unknown; // full transcript: JSON array of {role, text, time}
+    transcript?: unknown;
   };
+  transcript_text?: unknown;
 };
 
 function newAuditId(): string {
@@ -63,9 +67,16 @@ export async function POST(req: Request) {
     }
 
     // Fix spaces in S3 URLs (Karta sometimes sends URLs with spaces)
-    const recordingLink = call.recording_link?.replace(/\s+/g, "");
-    if (!recordingLink || !/^https?:\/\//i.test(recordingLink)) {
-      return NextResponse.json({ skipped: "no valid recording" });
+    const recordingLink = call.recording_link?.replace(/\s+/g, "") ?? "";
+    const hasRecording = /^https?:\/\//i.test(recordingLink);
+
+    // Prefer Karta's own transcript: scoring from text skips transcription
+    // (and its cost). Fall back to the recording when there's no transcript.
+    const kartaTranscript = formatKartaTranscript(
+      call.transcript_text ?? call.transcript ?? body.transcript_text,
+    );
+    if (!kartaTranscript && !hasRecording) {
+      return NextResponse.json({ skipped: "no transcript or valid recording" });
     }
 
     const supabase = createAdminClient();
@@ -87,7 +98,7 @@ export async function POST(req: Request) {
       id: auditId,
       timestamp: now,
       source: "webhook",
-      target: recordingLink,
+      target: hasRecording ? recordingLink : `karta:${call.call_id ?? auditId}`,
       call_id: call.call_id ?? null,
       mobile_number: call.from_number ?? null,
       preset: "general",
@@ -96,10 +107,28 @@ export async function POST(req: Request) {
       agent_id: otisAgentId,
       batch_id: null,
       status: "transcribing",
+      ...(kartaTranscript
+        ? { transcript: kartaTranscript, transcript_id: `upload_${auditId}`, duration_seconds: callSeconds }
+        : {}),
     });
 
     if (insertErr) {
       return NextResponse.json({ error: insertErr.message }, { status: 500 });
+    }
+
+    if (kartaTranscript) {
+      try {
+        await finalizeAudit(auditId);
+      } catch (err) {
+        console.error("[otis] finalizeAudit error:", err);
+      }
+      return NextResponse.json({
+        received: true,
+        audit_id: auditId,
+        source: "karta_transcript",
+        agent_name: agentName,
+        otis_agent_id: otisAgentId,
+      });
     }
 
     // Submit to transcription and finalize

@@ -23,9 +23,14 @@ type BatchRow = {
   call_id: string | null;
   mobile: string | null;
   disconnect_reason: string | null;
+  // Pre-written transcript (e.g. Karta's transcript_text). When present the
+  // call is scored from text and never sent for transcription.
+  transcript: string | null;
+  duration_seconds: number | null;
 };
 
 type BatchBody = {
+  batch_id?: string; // append these rows to an existing batch (chunked uploads)
   filename?: string;
   url_column?: string;
   rows?: unknown;   // new format: [{url, call_id, mobile, disconnect_reason}]
@@ -58,20 +63,22 @@ export async function POST(req: Request) {
     if (Array.isArray(body.rows)) {
       for (const r of body.rows as unknown[]) {
         if (r && typeof r === "object" && "url" in r) {
-          const row = r as { url?: unknown; call_id?: unknown; mobile?: unknown; disconnect_reason?: unknown };
+          const row = r as { url?: unknown; call_id?: unknown; mobile?: unknown; disconnect_reason?: unknown; transcript?: unknown; duration_seconds?: unknown };
           const url = typeof row.url === "string" ? row.url.trim() : "";
           inputRows.push({
             url,
             call_id: typeof row.call_id === "string" ? row.call_id.trim() || null : null,
             mobile: typeof row.mobile === "string" ? row.mobile.trim() || null : null,
             disconnect_reason: typeof row.disconnect_reason === "string" ? row.disconnect_reason.trim() || null : null,
+            transcript: typeof row.transcript === "string" ? row.transcript.trim() || null : null,
+            duration_seconds: typeof row.duration_seconds === "number" && Number.isFinite(row.duration_seconds) ? Math.round(row.duration_seconds) : null,
           });
         }
       }
     } else if (Array.isArray(body.urls)) {
       for (const u of body.urls as unknown[]) {
         const url = typeof u === "string" ? u.trim() : "";
-        inputRows.push({ url, call_id: null, mobile: null, disconnect_reason: null });
+        inputRows.push({ url, call_id: null, mobile: null, disconnect_reason: null, transcript: null, duration_seconds: null });
       }
     } else {
       return NextResponse.json(
@@ -114,29 +121,63 @@ export async function POST(req: Request) {
       );
     }
 
-    const batchId = newBatchId();
+    const appendTo = String(body.batch_id ?? "").trim() || null;
+    const batchId = appendTo ?? newBatchId();
     const now = new Date().toISOString();
 
-    const { error: batchErr } = await supabase.from("batches").insert({
-      id: batchId,
-      label: filename,
-      agent_id: agentId,
-      preset,
-      strictness,
-      custom_focus: customFocus || null,
-      url_column: urlColumn,
-      total: validRows.length,
-      created_at: now,
-    });
-    if (batchErr) {
-      return NextResponse.json(
-        { error: `Could not create batch: ${batchErr.message}` },
-        { status: 500 },
-      );
+    if (appendTo) {
+      const { data: existing } = await supabase
+        .from("batches")
+        .select("total")
+        .eq("id", appendTo)
+        .maybeSingle();
+      if (!existing) {
+        return NextResponse.json({ error: `Batch ${appendTo} not found` }, { status: 404 });
+      }
+      const { error: totalErr } = await supabase
+        .from("batches")
+        .update({ total: (existing.total ?? 0) + validRows.length })
+        .eq("id", appendTo);
+      if (totalErr) {
+        return NextResponse.json(
+          { error: `Could not update batch: ${totalErr.message}` },
+          { status: 500 },
+        );
+      }
+    } else {
+      const { error: batchErr } = await supabase.from("batches").insert({
+        id: batchId,
+        label: filename,
+        agent_id: agentId,
+        preset,
+        strictness,
+        custom_focus: customFocus || null,
+        url_column: urlColumn,
+        total: validRows.length,
+        created_at: now,
+      });
+      if (batchErr) {
+        return NextResponse.json(
+          { error: `Could not create batch: ${batchErr.message}` },
+          { status: 500 },
+        );
+      }
     }
 
-    const auditRows = validRows.map((r) => ({
-      id: newAuditId(),
+    const auditRows = validRows.map((r) => {
+      const id = newAuditId();
+      // Rows with a transcript skip the "queued" (transcription) phase; the
+      // process route's finalize phase scores them from the stored text.
+      const fromText = r.transcript
+        ? {
+            status: "transcribing",
+            transcript: r.transcript,
+            transcript_id: `upload_${id}`,
+            duration_seconds: r.duration_seconds,
+          }
+        : { status: "queued" };
+      return {
+      id,
       timestamp: now,
       source: "batch",
       target: r.url,
@@ -148,8 +189,9 @@ export async function POST(req: Request) {
       custom_focus: customFocus,
       agent_id: agentId,
       batch_id: batchId,
-      status: "queued",
-    }));
+      ...fromText,
+      };
+    });
 
     for (let i = 0; i < auditRows.length; i += INSERT_CHUNK) {
       const chunk = auditRows.slice(i, i + INSERT_CHUNK);

@@ -5,15 +5,21 @@ import { useRouter } from "next/navigation";
 import LottiePlayer from "@/components/lottie-player";
 import { AUDIT_PRESETS, STRICTNESS_LEVELS } from "@/lib/rubric";
 import { SPREADSHEET_EXTENSIONS } from "@/lib/upload-formats";
-import { detectUrlColumn, detectCallIdColumn, detectMobileColumn, detectDisconnectReasonColumn } from "@/lib/types/batch";
+import { detectUrlColumn, detectCallIdColumn, detectMobileColumn, detectDisconnectReasonColumn, detectTranscriptColumn, detectTalktimeColumn } from "@/lib/types/batch";
+import { formatKartaTranscript } from "@/lib/karta-transcript";
 
 const MAX_URLS = 1000;
+// Rows carrying transcripts can be large; keep each request well under
+// Vercel's 4.5 MB body limit.
+const MAX_REQUEST_BYTES = 3 * 1024 * 1024;
 
 type ParsedRow = {
   url: string;
   callId: string | null;
   mobile: string | null;
   disconnectReason: string | null;
+  transcript: string | null;
+  durationSeconds: number | null;
 };
 
 export default function BatchForm({
@@ -33,6 +39,7 @@ export default function BatchForm({
   const [callIdColumn, setCallIdColumn] = useState<string | null>(null);
   const [mobileColumn, setMobileColumn] = useState<string | null>(null);
   const [disconnectReasonColumn, setDisconnectReasonColumn] = useState<string | null>(null);
+  const [transcriptColumn, setTranscriptColumn] = useState<string | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [parsing, setParsing] = useState(false);
   const [skippedCount, setSkippedCount] = useState(0);
@@ -55,6 +62,7 @@ export default function BatchForm({
     setCallIdColumn(null);
     setMobileColumn(null);
     setDisconnectReasonColumn(null);
+    setTranscriptColumn(null);
     setParseError(null);
     setSkippedCount(0);
     if (!f) return;
@@ -91,6 +99,8 @@ export default function BatchForm({
       const callCol = detectCallIdColumn(headers);
       const mobCol = detectMobileColumn(headers);
       const discCol = detectDisconnectReasonColumn(headers);
+      const transcriptCol = detectTranscriptColumn(headers);
+      const talktimeCol = detectTalktimeColumn(headers);
         // Detect call_status column — only Karta data has it; Convozen and others may not.
         const callStatusKey = Object.keys(rows[0] ?? {}).find(k => k.toLowerCase().replace(/[^a-z0-9]/g, '') === 'callstatus') ?? null;
 
@@ -111,6 +121,10 @@ export default function BatchForm({
           callId: callCol ? String(r[callCol] ?? "").trim() || null : null,
           mobile: mobCol ? String(r[mobCol] ?? "").trim() || null : null,
           disconnectReason: discCol ? String(r[discCol] ?? "").trim() || null : null,
+          transcript: transcriptCol ? formatKartaTranscript(r[transcriptCol]) : null,
+          durationSeconds: talktimeCol && String(r[talktimeCol]).trim() !== "" && Number.isFinite(Number(r[talktimeCol]))
+            ? Math.round(Number(r[talktimeCol]))
+            : null,
         });
       }
       if (extracted.length === 0) {
@@ -125,6 +139,7 @@ export default function BatchForm({
       setCallIdColumn(callCol);
       setMobileColumn(mobCol);
       setDisconnectReasonColumn(discCol);
+      setTranscriptColumn(transcriptCol);
       setParsedRows(extracted);
       setSkippedCount(skipped);
     } catch (err) {
@@ -153,37 +168,58 @@ export default function BatchForm({
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch("/api/batches", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          filename: file.name,
-          url_column: urlColumn,
-          rows: parsedRows.map((r) => ({
-            url: r.url,
-            call_id: r.callId,
-            mobile: r.mobile,
-            disconnect_reason: r.disconnectReason,
-          })),
-          agent_id: agentId,
-          preset,
-          strictness,
-          custom_focus: customFocus,
-        }),
-      });
-      const raw = await res.text();
-      let data: { id?: string; error?: string } = {};
-      if (raw) {
-        try {
-          data = JSON.parse(raw);
-        } catch {
-          throw new Error(`Server returned a non-JSON response (${res.status}).`);
+      const rows = parsedRows.map((r) => ({
+        url: r.url,
+        call_id: r.callId,
+        mobile: r.mobile,
+        disconnect_reason: r.disconnectReason,
+        transcript: r.transcript,
+        duration_seconds: r.durationSeconds,
+      }));
+      const chunks: (typeof rows)[] = [[]];
+      let chunkBytes = 0;
+      for (const row of rows) {
+        const bytes = new Blob([JSON.stringify(row)]).size;
+        if (chunkBytes + bytes > MAX_REQUEST_BYTES && chunks[chunks.length - 1].length > 0) {
+          chunks.push([]);
+          chunkBytes = 0;
         }
-      } else {
-        throw new Error(`Empty ${res.status} response — the function crashed.`);
+        chunks[chunks.length - 1].push(row);
+        chunkBytes += bytes;
       }
-      if (!res.ok) throw new Error(data.error || "Upload failed");
-      router.push(`/batches/${data.id}`);
+
+      // The first request creates the batch; later ones append to it.
+      let batchId: string | undefined;
+      for (const chunk of chunks) {
+        const res = await fetch("/api/batches", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            batch_id: batchId,
+            filename: file.name,
+            url_column: urlColumn,
+            rows: chunk,
+            agent_id: agentId,
+            preset,
+            strictness,
+            custom_focus: customFocus,
+          }),
+        });
+        const raw = await res.text();
+        let data: { id?: string; error?: string } = {};
+        if (raw) {
+          try {
+            data = JSON.parse(raw);
+          } catch {
+            throw new Error(`Server returned a non-JSON response (${res.status}).`);
+          }
+        } else {
+          throw new Error(`Empty ${res.status} response — the function crashed.`);
+        }
+        if (!res.ok) throw new Error(data.error || "Upload failed");
+        batchId = data.id;
+      }
+      router.push(`/batches/${batchId}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setSubmitting(false);
@@ -274,6 +310,11 @@ export default function BatchForm({
             {mobileColumn && (
               <div className="text-xs text-emerald-700">
                 ✓ Mobile number column detected: <strong>{mobileColumn}</strong>
+              </div>
+            )}
+            {transcriptColumn && (
+              <div className="text-xs text-emerald-700">
+                ✓ Transcript column detected: <strong>{transcriptColumn}</strong> — calls with a transcript are audited from text (no transcription cost)
               </div>
             )}
             {disconnectReasonColumn && (
