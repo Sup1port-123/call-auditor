@@ -15,6 +15,8 @@ export default function NewAuditTabs({
   defaultAgentId: string;
 }) {
   const [mode, setMode] = useState<Mode>("single");
+  // A spreadsheet dropped on "Upload file" is handed to the batch form.
+  const [spreadsheet, setSpreadsheet] = useState<File | null>(null);
 
   return (
     <div>
@@ -39,9 +41,21 @@ export default function NewAuditTabs({
       {mode === "single" ? (
         <SubmitForm agents={agents} defaultAgentId={defaultAgentId} />
       ) : mode === "batch" ? (
-        <BatchForm agents={agents} defaultAgentId={defaultAgentId} />
+        <BatchForm
+          key={spreadsheet ? spreadsheet.name + spreadsheet.lastModified : "empty"}
+          agents={agents}
+          defaultAgentId={defaultAgentId}
+          initialFile={spreadsheet}
+        />
       ) : (
-        <UploadForm />
+        <UploadForm
+          agents={agents}
+          defaultAgentId={defaultAgentId}
+          onSpreadsheet={(f) => {
+            setSpreadsheet(f);
+            setMode("batch");
+          }}
+        />
       )}
     </div>
   );

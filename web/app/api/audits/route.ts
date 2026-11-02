@@ -1,21 +1,7 @@
 import { NextResponse } from "next/server";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { submitTranscription } from "@/lib/auditor";
-import { finalizeAudit } from "@/lib/finalize";
+import { startRecordingAudit } from "@/lib/start-audit";
 
 export const runtime = "nodejs";
-
-function newAuditId(): string {
-  const d = new Date();
-  const stamp =
-    d.toISOString().slice(0, 19).replace(/[-:T]/g, "").replace("T", "-");
-  return `${stamp}-${Math.random().toString(16).slice(2, 8)}`;
-}
-
-function originFromRequest(req: Request): string {
-  const url = new URL(req.url);
-  return url.origin;
-}
 
 export async function POST(req: Request) {
   let body: {
@@ -45,62 +31,13 @@ export async function POST(req: Request) {
     );
   }
 
-  const id = newAuditId();
-  const supabase = createAdminClient();
-
-  const { error: insertErr } = await supabase.from("audits").insert({
-    id,
-    timestamp: new Date().toISOString(),
-    source: "next-app",
-    target: audioUrl,
-    agent_id: body.agent_id || null,
-    preset: body.preset || "general",
-    strictness: body.strictness || "standard",
-    custom_focus: body.custom_focus || "",
-    status: "transcribing",
+  const result = await startRecordingAudit({
+    ...body,
+    audioUrl,
+    origin: new URL(req.url).origin,
   });
-
-  if (insertErr) {
-    return NextResponse.json(
-      { error: `Could not create audit row: ${insertErr.message}` },
-      { status: 500 },
-    );
+  if ("error" in result) {
+    return NextResponse.json({ error: result.error }, { status: result.status });
   }
-
-  try {
-    const webhookUrl = `${originFromRequest(req)}/api/audits/webhook`;
-    const { transcriptId, transcript, durationSeconds } =
-      await submitTranscription({
-        audioUrl,
-        webhookUrl,
-        auditId: id,
-      });
-
-    const updateFields: Record<string, unknown> = {
-      transcript_id: transcriptId,
-    };
-    if (transcript !== undefined) {
-      updateFields.transcript = transcript;
-      updateFields.duration_seconds = durationSeconds ?? null;
-    }
-    await supabase.from("audits").update(updateFields).eq("id", id);
-
-    if (transcript !== undefined) {
-      finalizeAudit(id).catch((err) =>
-        console.error("[otis] finalizeAudit error:", err),
-      );
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    await supabase
-      .from("audits")
-      .update({ status: "failed", error_message: message })
-      .eq("id", id);
-    return NextResponse.json(
-      { error: `Transcription submission failed: ${message}` },
-      { status: 502 },
-    );
-  }
-
-  return NextResponse.json({ id });
+  return NextResponse.json({ id: result.id });
 }

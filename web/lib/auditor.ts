@@ -10,6 +10,7 @@ isInboundAgent,
 type RubricDimension,
 } from "./rubric";
 import { scoreWithJev } from "./jev";
+import { RECORDING_EXTENSIONS } from "./upload-formats";
 import {
 buildFocusPromptBlock,
 hasFocus,
@@ -209,6 +210,16 @@ const transcriptId = `whisper_${Date.now()}_${Math.random().toString(16).slice(2
 return { transcriptId, transcript, durationSeconds };
 }
 
+// Audio/video types Gemini accepts inline, by file extension.
+const GEMINI_AUDIO_MIME: Record<string, string> = {
+mp3: "audio/mpeg", mpeg: "audio/mpeg", mpga: "audio/mpeg", m4a: "audio/m4a",
+mp4: "audio/mp4", wav: "audio/wav", webm: "audio/webm", ogg: "audio/ogg",
+oga: "audio/ogg", opus: "audio/ogg", aac: "audio/aac", flac: "audio/flac",
+aiff: "audio/aiff", aif: "audio/aiff", mov: "video/mov", avi: "video/avi",
+m4v: "video/mp4", wmv: "video/wmv", flv: "video/x-flv", "3gp": "video/3gpp",
+"3gpp": "video/3gpp",
+};
+
 async function submitTranscriptionWithGemini(audioUrl: string): Promise<{
 transcriptId: string;
 transcript: string;
@@ -216,18 +227,18 @@ durationSeconds: number | null;
 }> {
 const apiKey = process.env.GOOGLE_API_KEY!;
 const model = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+const urlPath = audioUrl.split("?")[0];
+const ext = urlPath.split(".").pop()?.toLowerCase() ?? "mp3";
+// Formats Gemini can't decode (amr, wma, mkv, …) throw here so the caller
+// falls through to AssemblyAI, which handles them.
+if (!GEMINI_AUDIO_MIME[ext] && RECORDING_EXTENSIONS.includes(ext)) {
+throw new Error(`Gemini does not support .${ext} recordings`);
+}
 const audioRes = await fetch(audioUrl);
 if (!audioRes.ok) throw new Error(`Could not download audio (${audioRes.status})`);
 const audioBuffer = await audioRes.arrayBuffer();
 const base64 = Buffer.from(audioBuffer).toString("base64");
-const urlPath = audioUrl.split("?")[0];
-const ext = urlPath.split(".").pop()?.toLowerCase() ?? "mp3";
-const MIME_MAP: Record<string, string> = {
-mp3: "audio/mpeg", mp4: "audio/mp4", mpeg: "audio/mpeg",
-mpga: "audio/mpeg", m4a: "audio/m4a", wav: "audio/wav",
-webm: "audio/webm", ogg: "audio/ogg",
-};
-const mimeType = MIME_MAP[ext] ?? "audio/mpeg";
+const mimeType = GEMINI_AUDIO_MIME[ext] ?? "audio/mpeg";
 const res = await fetch(
 `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
 {

@@ -1,9 +1,10 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import LottiePlayer from "@/components/lottie-player";
 import { AUDIT_PRESETS, STRICTNESS_LEVELS } from "@/lib/rubric";
+import { SPREADSHEET_EXTENSIONS } from "@/lib/upload-formats";
 import { detectUrlColumn, detectCallIdColumn, detectMobileColumn, detectDisconnectReasonColumn } from "@/lib/types/batch";
 
 const MAX_URLS = 1000;
@@ -18,9 +19,11 @@ type ParsedRow = {
 export default function BatchForm({
   agents,
   defaultAgentId,
+  initialFile,
 }: {
   agents: { id: string; name: string }[];
   defaultAgentId: string;
+  initialFile?: File | null;
 }) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -42,7 +45,10 @@ export default function BatchForm({
   const [error, setError] = useState<string | null>(null);
 
   async function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0] ?? null;
+    await loadFile(e.target.files?.[0] ?? null);
+  }
+
+  async function loadFile(f: File | null) {
     setFile(f);
     setParsedRows([]);
     setUrlColumn(null);
@@ -128,6 +134,12 @@ export default function BatchForm({
     }
   }
 
+  // Parse a spreadsheet handed over from the "Upload file" tab, once on mount.
+  useEffect(() => {
+    if (initialFile) loadFile(initialFile);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!file) {
@@ -200,12 +212,12 @@ export default function BatchForm({
       <Field
         index="01"
         label="Spreadsheet"
-        hint='CSV or Excel (.xlsx). Otis auto-detects recording_url, call_id, mobile number, and disconnect_reason columns.'
+        hint='CSV, TSV, Excel (.xlsx/.xls) or OpenDocument (.ods). Otis auto-detects recording_url, call_id, mobile number, and disconnect_reason columns.'
       >
         <input
           ref={fileRef}
           type="file"
-          accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          accept={SPREADSHEET_EXTENSIONS.map((e) => `.${e}`).join(",")}
           onChange={onFileChange}
           className="hidden"
         />
