@@ -97,9 +97,19 @@ async function checkAndSendBatchEmail(batchId: string): Promise<void> {
     : process.env.VERCEL_URL
     ? `https://${process.env.VERCEL_URL}`
     : "http://localhost:3000";
-  fetch(`${appUrl}/api/batches/${batchId}/email`, { method: "POST" }).catch((e) =>
-    console.error("[otis] batch email trigger failed:", e),
-  );
+  // Await the request so it is actually sent before this serverless function
+  // is frozen. We don't wait for the email itself: the email route keeps
+  // running after the timeout aborts our side of the connection.
+  try {
+    await fetch(`${appUrl}/api/batches/${batchId}/email`, {
+      method: "POST",
+      signal: AbortSignal.timeout(4000),
+    });
+  } catch (e) {
+    if (!(e instanceof Error && e.name === "TimeoutError")) {
+      console.error("[otis] batch email trigger failed:", e);
+    }
+  }
   console.log(`[otis] batch-complete email triggered for ${batchId}`);
 }
 
@@ -153,7 +163,7 @@ return { status: "transcribing" };
 
 if (t.status === "error") {
 await supabase.from("audits").update({ status: "failed", error_message: `Transcription failed: ${t.error ?? "unknown"}` }).eq("id", auditId);
-if (audit.batch_id) checkAndSendBatchEmail(audit.batch_id).catch(console.error);
+if (audit.batch_id) await checkAndSendBatchEmail(audit.batch_id).catch(console.error);
 return { status: "failed" };
 }
 if (t.status !== "completed") {
@@ -167,13 +177,13 @@ durationSeconds = typeof t.audio_duration === "number" && t.audio_duration >= 0 
 
 if (countWords(transcriptText) < MIN_TRANSCRIPT_WORDS) {
 await supabase.from("audits").update({ status: "failed", transcript: transcriptText, duration_seconds: durationSeconds, audited_at: new Date().toISOString(), error_message: "No meaningful conversation detected - call was too short or silent." }).eq("id", auditId);
-if (audit.batch_id) checkAndSendBatchEmail(audit.batch_id).catch(console.error);
+if (audit.batch_id) await checkAndSendBatchEmail(audit.batch_id).catch(console.error);
 return { status: "failed" };
 }
 
 if (durationSeconds !== null && durationSeconds < MIN_CALL_DURATION_SECONDS) {
 await supabase.from("audits").update({ status: "failed", transcript: transcriptText, duration_seconds: durationSeconds, audited_at: new Date().toISOString(), error_message: `Call too short to audit - ${durationSeconds}s is under the ${MIN_CALL_DURATION_SECONDS}s minimum.` }).eq("id", auditId);
-if (audit.batch_id) checkAndSendBatchEmail(audit.batch_id).catch(console.error);
+if (audit.batch_id) await checkAndSendBatchEmail(audit.batch_id).catch(console.error);
 return { status: "failed" };
 }
 
@@ -232,13 +242,13 @@ const { sendLowScoreAlert } = await import("@/lib/alert");
 sendLowScoreAlert({ auditId, agentName: agentName ?? "Unknown Agent", score: evaluation.overall_score, recommendations: evaluation.improvement_recommendations ?? [] }).catch(console.error);
 }
 
-if (audit.batch_id) checkAndSendBatchEmail(audit.batch_id).catch(console.error);
+if (audit.batch_id) await checkAndSendBatchEmail(audit.batch_id).catch(console.error);
 
 return { status: "completed" };
 } catch (err) {
 const message = err instanceof Error ? err.message : String(err);
 await supabase.from("audits").update({ status: "failed", transcript: transcriptText, duration_seconds: durationSeconds, audited_at: new Date().toISOString(), error_message: `LLM scoring failed: ${message}` }).eq("id", auditId);
-if (audit.batch_id) checkAndSendBatchEmail(audit.batch_id).catch(console.error);
+if (audit.batch_id) await checkAndSendBatchEmail(audit.batch_id).catch(console.error);
 return { status: "failed" };
 }
 }

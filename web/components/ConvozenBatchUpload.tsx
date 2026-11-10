@@ -249,7 +249,7 @@ export function ConvozenBatchUpload({
                 </div>
               ))}
             </div>
-            <a href="/batches" className="mt-3 block text-center text-xs font-semibold text-violet-600 hover:underline">View batches →</a>
+            <a href={result.batchId ? `/batches/${result.batchId}` : "/batches"} className="mt-3 block text-center text-xs font-semibold text-violet-600 hover:underline">Open this batch (results + email report) →</a>
           </div>
         )}
 

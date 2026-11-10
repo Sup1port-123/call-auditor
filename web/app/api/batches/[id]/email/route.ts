@@ -32,6 +32,22 @@ export async function POST(
   }
 
   const total = audits.length;
+  if (total === 0) {
+    return NextResponse.json({ error: "This batch has no audits to report." }, { status: 404 });
+  }
+
+  const smtpUser = process.env.SMTP_USER;
+  const smtpPass = process.env.SMTP_PASS;
+  if (!smtpUser || !smtpPass) {
+    return NextResponse.json(
+      { error: "Email is not set up for this deployment: SMTP_USER / SMTP_PASS are missing in Vercel." },
+      { status: 500 },
+    );
+  }
+  // The SMTP login is often not a valid sender address (e.g. a Brevo relay
+  // login), so prefer the configured "from" address like the daily report does.
+  const fromAddress = process.env.REPORT_FROM_EMAIL || smtpUser;
+
   const completed = audits.filter((a) => a.overall_score !== null).length;
   const failed = total - completed;
   const avgScore =
@@ -110,15 +126,21 @@ ${focusHtml}
     host: process.env.SMTP_HOST ?? "smtp-relay.brevo.com",
     port: 587,
     secure: false,
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    auth: { user: smtpUser, pass: smtpPass },
   });
 
-  await transporter.sendMail({
-    from: `"Otis AI Auditor" <${process.env.SMTP_USER}>`,
-    to: RECIPIENTS,
-    subject: `Convozen — Audit Complete · ${dateStr}`,
-    html,
-  });
+  try {
+    await transporter.sendMail({
+      from: `"Otis AI Auditor" <${fromAddress}>`,
+      to: RECIPIENTS,
+      subject: `Convozen — Audit Complete · ${dateStr}`,
+      html,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[email] batch report send failed:", message);
+    return NextResponse.json({ error: `Email could not be sent: ${message}` }, { status: 502 });
+  }
 
   return NextResponse.json({ sent: true, recipients: RECIPIENTS.length, audits: total });
 }

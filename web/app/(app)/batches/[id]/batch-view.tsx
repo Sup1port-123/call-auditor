@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Batch } from "@/lib/types/batch";
@@ -40,7 +40,21 @@ export default function BatchView({
   const [counts, setCounts] = useState<Counts>(() => tally(audits));
   const [runId, setRunId] = useState(0);
   const [retrying, setRetrying] = useState(false);
-  const emailFiredRef = useRef(false);
+  const [emailState, setEmailState] = useState<
+    { status: "idle" | "sending" } | { status: "sent"; recipients: number } | { status: "error"; message: string }
+  >({ status: "idle" });
+
+  async function sendEmailReport() {
+    setEmailState({ status: "sending" });
+    try {
+      const res = await fetch(`/api/batches/${batch.id}/email`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Email request failed (${res.status})`);
+      setEmailState({ status: "sent", recipients: data.recipients ?? 0 });
+    } catch (err) {
+      setEmailState({ status: "error", message: err instanceof Error ? err.message : String(err) });
+    }
+  }
 
   const [filterCallId, setFilterCallId] = useState("");
   const [filterMobile, setFilterMobile] = useState("");
@@ -75,10 +89,6 @@ export default function BatchView({
         setCounts(s);
         if (s.done) {
           router.refresh();
-          if (!emailFiredRef.current) {
-            emailFiredRef.current = true;
-            fetch(`/api/batches/${batch.id}/email`, { method: "POST" }).catch(() => {});
-          }
           break;
         }
         try { await fetch(`/api/batches/${batch.id}/process`, { method: "POST" }); } catch { await sleep(3000); }
@@ -152,6 +162,23 @@ export default function BatchView({
             </button>
           )}
         </div>
+        {counts.done && (
+          <div className="flex flex-wrap items-center gap-3 mt-4 text-xs">
+            <button type="button" onClick={sendEmailReport} disabled={emailState.status === "sending"}
+              className="rounded-full border border-zinc-300 bg-white px-4 py-1.5 font-medium hover:border-[var(--ink)] transition disabled:opacity-50">
+              {emailState.status === "sending" ? "Sending email…" : "Send email report again"}
+            </button>
+            {emailState.status === "idle" && (
+              <span className="text-zinc-500">The report is emailed automatically when the batch finishes.</span>
+            )}
+            {emailState.status === "sent" && (
+              <span className="text-emerald-700">Email report sent to {emailState.recipients} recipients.</span>
+            )}
+            {emailState.status === "error" && (
+              <span className="text-rose-700">Email report not sent: {emailState.message}</span>
+            )}
+          </div>
+        )}
         {counts.failed > 0 && !retrying && (
           <p className="text-xs text-zinc-500 mt-3">Re-runs only the failed recordings — already-transcribed ones are just re-scored. Keep this tab open while they process.</p>
         )}
