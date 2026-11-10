@@ -26,10 +26,14 @@ export default function BatchForm({
   agents,
   defaultAgentId,
   initialFile,
+  onConvozen,
 }: {
   agents: { id: string; name: string }[];
   defaultAgentId: string;
   initialFile?: File | null;
+  // Called with a Convozen export (transcript/summary columns, no recording
+  // URLs) so the parent can audit it from text instead.
+  onConvozen?: (file: File) => void;
 }) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -86,6 +90,10 @@ export default function BatchForm({
         const isConvozen = normHdrs.some(h =>
           ["transcript", "chathist", "summary", "npsscore", "bottalktimemins"].some(s => h.includes(s))
         );
+        if (isConvozen && onConvozen) {
+          onConvozen(f);
+          return;
+        }
         if (isConvozen) {
           throw new Error(
             "This looks like a Convozen AI Call Logs export (found: Transcript / summary columns). Please use the Convozen Batch Upload page instead — go to /convozen-batch to upload this file."

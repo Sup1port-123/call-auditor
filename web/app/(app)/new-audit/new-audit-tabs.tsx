@@ -4,6 +4,7 @@ import { useState } from "react";
 import SubmitForm from "./submit-form";
 import BatchForm from "./batch-form";
 import UploadForm from "./upload-form";
+import { ConvozenBatchUpload } from "@/components/ConvozenBatchUpload";
 
 type Mode = "single" | "batch" | "upload";
 
@@ -17,6 +18,9 @@ export default function NewAuditTabs({
   const [mode, setMode] = useState<Mode>("single");
   // A spreadsheet dropped on "Upload file" is handed to the batch form.
   const [spreadsheet, setSpreadsheet] = useState<File | null>(null);
+  // A Convozen export dropped on either upload tab is audited here from its
+  // transcript/summary text, so Karta and Convozen files share one page.
+  const [convozenFile, setConvozenFile] = useState<File | null>(null);
 
   return (
     <div>
@@ -40,18 +44,42 @@ export default function NewAuditTabs({
 
       {mode === "single" ? (
         <SubmitForm agents={agents} defaultAgentId={defaultAgentId} />
+      ) : mode === "batch" && convozenFile ? (
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-violet-200 bg-violet-50 text-violet-800 text-sm px-5 py-3">
+            This is a Convozen export, so Otis will audit it from its transcript / summary text.{" "}
+            <button
+              type="button"
+              onClick={() => {
+                setConvozenFile(null);
+                setSpreadsheet(null);
+              }}
+              className="font-semibold underline"
+            >
+              Choose a different file
+            </button>
+          </div>
+          <ConvozenBatchUpload
+            key={convozenFile.name + convozenFile.lastModified}
+            agents={agents}
+            initialFile={convozenFile}
+            defaultAgentId={defaultAgentId}
+          />
+        </div>
       ) : mode === "batch" ? (
         <BatchForm
           key={spreadsheet ? spreadsheet.name + spreadsheet.lastModified : "empty"}
           agents={agents}
           defaultAgentId={defaultAgentId}
           initialFile={spreadsheet}
+          onConvozen={setConvozenFile}
         />
       ) : (
         <UploadForm
           agents={agents}
           defaultAgentId={defaultAgentId}
           onSpreadsheet={(f) => {
+            setConvozenFile(null);
             setSpreadsheet(f);
             setMode("batch");
           }}

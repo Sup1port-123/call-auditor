@@ -54,11 +54,21 @@ const MAX_CHUNK_BYTES = 3 * 1024 * 1024; // 3 MB — well under Vercel's 4.5 MB 
 const enc = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
 function byteLen(s: string) { return enc ? enc.encode(s).length : s.length; }
 
-export function ConvozenBatchUpload({ agents }: { agents: Agent[] }) {
+export function ConvozenBatchUpload({
+  agents,
+  initialFile = null,
+  defaultAgentId = "",
+}: {
+  agents: Agent[];
+  initialFile?: File | null;
+  defaultAgentId?: string;
+}) {
   const fileRef = useRef<HTMLInputElement>(null);
-  const [file, setFile] = useState<File | null>(null);
-  const [agentId, setAgentId] = useState("");
-  const [batchName, setBatchName] = useState("");
+  const [file, setFile] = useState<File | null>(initialFile);
+  const [agentId, setAgentId] = useState(defaultAgentId);
+  const [batchName, setBatchName] = useState(
+    initialFile ? "Convozen Inbound - " + new Date().toISOString().slice(0, 10) : "",
+  );
   const [customFocus, setCustomFocus] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<BatchResult | null>(null);
