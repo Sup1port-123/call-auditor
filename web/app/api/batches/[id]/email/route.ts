@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import nodemailer from "nodemailer";
 import { getOrBuildBatchFocusReport } from "@/lib/batch-focus";
 import { renderFocusReportHtml } from "@/lib/focus";
+import { AUDIT_EXPORT_COLUMNS, buildAuditsXlsx } from "@/lib/audit-export";
 
 export const maxDuration = 120;
 
@@ -95,7 +96,7 @@ export async function POST(
 <html><head><meta charset="UTF-8"></head>
 <body style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,sans-serif">
 <div style="max-width:1100px;margin:0 auto;padding:24px">
-<h2 style="margin:0 0 4px;font-size:22px;color:#1a1a1a">Convozen — Audit Complete</h2>
+<h2 style="margin:0 0 4px;font-size:22px;color:#1a1a1a">Otis — Audit Complete</h2>
 <p style="margin:0 0 20px;color:#666;font-size:13px">Daily quality report · ${dateStr}</p>
 <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px">
 <tr>
@@ -119,8 +120,25 @@ ${focusHtml}
 <tbody>${rows}</tbody>
 </table>
 </div>
-<p style="font-size:11px;color:#9ca3af;text-align:center;margin-top:16px">Otis AI Auditor · ${batchId} · Sent automatically on completion</p>
+<p style="font-size:11px;color:#9ca3af;text-align:center;margin-top:16px">Otis AI Auditor · ${batchId} · Sent automatically on completion · Full audit output attached as Excel</p>
 </div></body></html>`;
+
+  // Attach the full audit output for the batch: the same Excel file the
+  // dashboard "Download Excel" button produces (scores, rationales,
+  // compliance, summary, gaps, recommendations, transcript).
+  let attachments: { filename: string; content: Buffer }[] = [];
+  try {
+    const { data: xlsxRows, error: xlsxErr } = await supabase
+      .from("audits")
+      .select(AUDIT_EXPORT_COLUMNS)
+      .eq("batch_id", batchId)
+      .order("timestamp", { ascending: false });
+    if (xlsxErr) throw new Error(xlsxErr.message);
+    const xlsx = await buildAuditsXlsx(xlsxRows ?? []);
+    attachments = [{ filename: `otis-audit-${batchId}.xlsx`, content: Buffer.from(xlsx) }];
+  } catch (e) {
+    console.error("[email] excel attachment failed:", e);
+  }
 
   const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST ?? "smtp-relay.brevo.com",
@@ -133,8 +151,9 @@ ${focusHtml}
     await transporter.sendMail({
       from: `"Otis AI Auditor" <${fromAddress}>`,
       to: RECIPIENTS,
-      subject: `Convozen — Audit Complete · ${dateStr}`,
+      subject: `Otis — Audit Complete · ${dateStr}`,
       html,
+      attachments,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
