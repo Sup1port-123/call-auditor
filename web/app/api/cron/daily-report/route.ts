@@ -29,6 +29,15 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
 
+    // This ping is already scheduled every ~15 minutes, so use it to keep
+    // batches moving too. We only need the request to go out; the process
+    // route keeps running after our side times out.
+    const prod = process.env.VERCEL_PROJECT_PRODUCTION_URL;
+    const base = prod ? `https://${prod}` : url.origin;
+    await fetch(`${base}/api/cron/process-batches?key=${encodeURIComponent(secret)}`, {
+      signal: AbortSignal.timeout(2000),
+    }).catch(() => {});
+
     const supabase = createAdminClient();
     const { data: settings } = await supabase
       .from("report_settings")
