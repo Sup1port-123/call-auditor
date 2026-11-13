@@ -37,6 +37,21 @@ export async function GET(req: Request) {
   }
 
   const batchIds = [...new Set((pending ?? []).map((r) => r.batch_id as string))];
+
+  // An audit is moved to "scoring" while it is being scored; if the function
+  // running it was cut off it stays there for good. Put those back so they are
+  // scored again. Scoring takes seconds, so anything older than this is stuck.
+  const staleBefore = new Date(Date.now() - 20 * 60_000).toISOString();
+  if (batchIds.length > 0) {
+    const { error: resetErr } = await supabase
+      .from("audits")
+      .update({ status: "transcribing" })
+      .in("batch_id", batchIds)
+      .eq("status", "scoring")
+      .is("audited_at", null)
+      .lt("timestamp", staleBefore);
+    if (resetErr) console.error("[otis] process-batches: stale reset failed:", resetErr.message);
+  }
   const prod = process.env.VERCEL_PROJECT_PRODUCTION_URL;
   const base = prod ? `https://${prod}` : url.origin;
 
