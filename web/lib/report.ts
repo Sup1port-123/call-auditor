@@ -530,29 +530,39 @@ export async function generateAndSendReport(opts: { emails: string[]; istDate: s
     .limit(10000);
 
   const allXlsx = await buildAuditsXlsx(xlsxRows ?? []);
+
+  // One combined email for every agent (inbound and outbound), with a single
+  // Excel of the day's audits attached.
+  if (rows.length === 0) return { inboundCount: 0, outboundCount: 0 };
+  const displayDate = formatDisplayDate(opts.istDate);
+  const scored = rows.filter(r => r.overall_score != null);
+  const avgPct = scored.length > 0 ? Math.round(scored.reduce((sum, r) => sum + (r.overall_score ?? 0), 0) / scored.length * 20) : 0;
+  const agentNames = [...new Set(rows.map(r => extractAgentName(r)).filter(n => n !== "Unknown Agent"))];
+  const summary = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:760px;margin:0 auto;color:#111;">
+    ${emailHeader(`📊 Otis Daily Audit Report — ${displayDate}`, `${rows.length} call${rows.length === 1 ? "" : "s"} audited across ${agentNames.length || 1} agent${agentNames.length === 1 ? "" : "s"}: ${inboundRows.length} inbound · ${outboundRows.length} outbound`, "#1f3a5f")}
+    <div style="padding:24px 0;">
+      ${statsRow([
+        { label: "Total Calls", value: rows.length },
+        { label: "Inbound", value: inboundRows.length },
+        { label: "Outbound", value: outboundRows.length },
+        { label: "Avg Score", value: `${avgPct}%`, color: avgPct >= 80 ? "#16a34a" : avgPct >= 60 ? "#ca8a04" : "#dc2626" },
+      ])}
+      ${renderAgentTable(rows)}
+      <p style="color:#6b7280;font-size:12px;margin-top:16px;">The full audit output for every call (scores, rationale, compliance, summary, gaps, recommendations and transcript) is in the attached Excel.</p>
+    </div>
+  </div>`;
+  const divider = '<hr style="border:none;border-top:2px solid #e5e7eb;margin:8px 0 24px 0;">';
   const errors: string[] = [];
-
-  if (inboundRows.length > 0) {
-    try {
-      const html = await buildInboundHtml(inboundRows, opts.istDate);
-      await sendReportEmail({
-        to: opts.emails,
-        subject: `Otis Inbound Report [${[...new Set(inboundRows.map(r => extractAgentName(r)).filter(n => n !== "Unknown Agent"))].join(", ")}] — ${formatDisplayDate(opts.istDate)}`,
-        html, filename: `otis-inbound-${opts.istDate}.xlsx`, xlsx: allXlsx,
-      });
-    } catch (err) { errors.push(`Inbound email failed: ${err instanceof Error ? err.message : String(err)}`); }
-  }
-
-  if (outboundRows.length > 0) {
-    try {
-      const html = await buildOutboundHtml(outboundRows, opts.istDate);
-      await sendReportEmail({
-        to: opts.emails,
-        subject: `Otis Outbound Report [${[...new Set(outboundRows.map(r => extractAgentName(r)).filter(n => n !== "Unknown Agent"))].join(", ")}] — ${formatDisplayDate(opts.istDate)}`,
-        html, filename: `otis-outbound-${opts.istDate}.xlsx`, xlsx: allXlsx,
-      });
-    } catch (err) { errors.push(`Outbound email failed: ${err instanceof Error ? err.message : String(err)}`); }
-  }
+  try {
+    const sections = [summary];
+    if (inboundRows.length > 0) sections.push(await buildInboundHtml(inboundRows, opts.istDate));
+    if (outboundRows.length > 0) sections.push(await buildOutboundHtml(outboundRows, opts.istDate));
+    await sendReportEmail({
+      to: opts.emails,
+      subject: `Otis Daily Audit Report — ${displayDate} · ${rows.length} calls${agentNames.length ? ` [${agentNames.join(", ")}]` : ""}`,
+      html: sections.join(divider), filename: `otis-daily-audit-report-${opts.istDate}.xlsx`, xlsx: allXlsx,
+    });
+  } catch (err) { errors.push(`Daily report email failed: ${err instanceof Error ? err.message : String(err)}`); }
 
   if (errors.length > 0) throw new Error(errors.join("; "));
   return { inboundCount: inboundRows.length, outboundCount: outboundRows.length };

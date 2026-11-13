@@ -169,7 +169,7 @@ export default function BatchView({
               {emailState.status === "sending" ? "Sending email…" : "Send email report again"}
             </button>
             {emailState.status === "idle" && (
-              <span className="text-zinc-500">The report is emailed automatically when the batch finishes.</span>
+              <span className="text-zinc-500">All batches go out in one combined email each day; use the button to email this batch now.</span>
             )}
             {emailState.status === "sent" && (
               <span className="text-emerald-700">Email report sent to {emailState.recipients} recipients.</span>

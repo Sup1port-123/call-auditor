@@ -85,6 +85,9 @@ function computeNeedsReview(
 }
 
 async function checkAndSendBatchEmail(batchId: string): Promise<void> {
+  // Per-batch emails are off: one combined daily report goes out instead (see
+  // lib/report.ts). Set BATCH_EMAILS=on in Vercel to get them back.
+  if (process.env.BATCH_EMAILS !== "on") return;
   const supabase = createAdminClient();
   const { count } = await supabase
     .from("audits")
