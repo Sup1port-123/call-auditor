@@ -1,26 +1,49 @@
 /**
  * Otis - audit new calls from a Google Sheet automatically.
  *
- * Paste this into the sheet: Extensions > Apps Script. Then follow README.md.
- * Every run it finds rows not sent yet, posts them to Otis (which audits them
- * and emails the batch report with the Excel attached) and writes "sent" in an
- * "Otis Status" column so a row is never sent twice.
+ * Paste this into each sheet (Karta and Convozen): Extensions > Apps Script.
+ * Then follow README.md. Every run finds calls that are long enough and not sent
+ * yet, posts them to Otis (which audits them and emails the batch report with
+ * the Excel attached) and writes "sent" in an "Otis Status" column so a row is
+ * never sent twice.
  */
 
 // ---- Settings -------------------------------------------------------------
 var OTIS_URL = 'https://YOUR-PRODUCTION-DOMAIN.vercel.app/api/ingest/sheet'; // public production domain
+
+// Tabs to read. The same list works in both spreadsheets: a tab that is not
+// in the open spreadsheet is skipped.
+//   source: 'karta' or 'convozen'
+//   durationUnit: unit of the call-duration column ('seconds' or 'minutes')
 var SHEETS = [
-  // tab = sheet tab name, source = 'karta' or 'convozen'
-  // durationUnit = unit of the call-duration column: 'seconds' or 'minutes'
   { tab: 'ai_karta_logs', source: 'karta', durationUnit: 'seconds' },
-  // { tab: 'convozen_logs', source: 'convozen', durationUnit: 'minutes' },
+  { tab: 'ai_convozen_logs', source: 'convozen', durationUnit: 'seconds' },
 ];
-var LOOKBACK_DAYS = 2;     // only rows whose call date is within this many days are sent
-var MAX_ROWS_PER_RUN = 300; // rows sent per run per tab (older unsent rows go in the next run)
-var CHUNK = 50;            // rows per request
+
+var MIN_SECONDS = 60;       // calls shorter than this are not audited
+var LOOKBACK_DAYS = 2;      // only calls from the last N days are sent
+var MAX_ROWS_PER_RUN = 200; // calls sent per run per tab (the rest go in the next run)
+var SCAN_ROWS = 30000;      // how many rows from the bottom of the tab are scanned
+var CHUNK = 50;             // calls per request
+var TRIGGER_MINUTES = 30;   // how often the automatic sync runs (1, 5, 10, 15 or 30)
 var STATUS_HEADER = 'Otis Status';
-var ONLY_ENDED = true;     // skip rows whose call_status is not "ended" (when the column exists)
-var TRIGGER_MINUTES = 30;  // how often the automatic sync runs (1, 5, 10, 15 or 30)
+
+// Sheet agent name -> the exact name of the agent in Otis (Otis > Agents). The
+// Otis agent supplies the rubric and knowledge base. A name not listed here is
+// used as it is; if Otis has no agent with that name the calls are audited
+// without an agent (general audit).
+var AGENT_MAP = {
+  'Inbound Support - Tara Live': 'Inbound Support',
+  'Tara_Inbound': 'Inbound Support',
+  'Welcome (lead + sales)': 'Welcome Call Agent-',
+  'Arjun_Groscore': 'Gro Score',
+  'CCdrop_GP': 'CC Drop GP',
+};
+// Used when a row has no agent name: Convozen agentId -> Otis agent.
+var AGENT_ID_MAP = {
+  'agent_GP01_0000049042': 'Inbound Support',
+  'agent_GP02_0000059413': 'Gro Score',
+};
 
 // The secret is stored in Script Properties (Project Settings), not in this file:
 //   name: OTIS_KEY   value: the CRON_SECRET from Vercel
@@ -29,17 +52,19 @@ var TRIGGER_MINUTES = 30;  // how often the automatic sync runs (1, 5, 10, 15 or
 var ALIASES = {
   call_id: ['callid', 'callidentifier', 'uniqueid'],
   agent_name: ['agentname', 'agent', 'campaign'],
-  recording_url: ['recordinglink', 'recordingurl', 'audiourl', 'callrecording'],
+  agent_id: ['agentid'],
+  recording_url: ['recordinglink', 'recordingurl', 'audiourl', 'callrecording', 'bulkrequestid'],
   transcript: ['transcripttext', 'transcript', 'chathistory'],
   summary: ['summary', 'callsummary'],
   duration: ['talktimeduration', 'callduration', 'duration', 'sessionduration'],
-  call_time: ['callstarttimestamp', 'calldate', 'calltime', 'time', 'createdat'],
+  call_time: ['callstarttimestamp', 'createdat', 'calldate', 'calltime', 'time'],
   call_status: ['callstatus', 'status'],
   direction: ['calldirection', 'direction'],
   to_number: ['tonumber', 'targetnumber', 'phonenumber', 'gpmobilenumber', 'mobile'],
   from_number: ['fromnumber', 'callernumber'],
   disconnect_reason: ['disconnectreason', 'disconnectedby', 'endedby'],
 };
+var OK_STATUS = ['ended', 'completed', 'connected', 'success', 'answered'];
 
 // ---- Entry points ----------------------------------------------------------
 
@@ -79,78 +104,107 @@ function cellDate_(v) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-function toSeconds_(v, unit) {
-  if (v === '' || v === null || v === undefined) return null;
-  if (v instanceof Date) return null;
+// Seconds as a number, or null when the cell is empty or not a duration.
+function seconds_(v, unit) {
+  if (v === '' || v === null || v === undefined || v instanceof Date) return null;
   var s = String(v).trim();
-  if (/^\d+:\d{1,2}(:\d{1,2})?$/.test(s)) return s; // mm:ss, parsed by Otis
+  var m = s.match(/^(\d+):(\d{1,2})(?::(\d{1,2}))?$/);
+  if (m) return m[3] !== undefined ? (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3]) : (+m[1]) * 60 + (+m[2]);
   var n = Number(s);
   if (isNaN(n)) return null;
-  return unit === 'minutes' ? Math.round(n * 60) : Math.round(n);
+  return Math.round(unit === 'minutes' ? n * 60 : n);
+}
+
+function column_(sheet, from, n, idx) {
+  if (idx < 0) return null;
+  return sheet.getRange(from, idx + 1, n, 1).getValues().map(function (r) { return r[0]; });
 }
 
 function syncTab_(cfg, key) {
   var sheet = SpreadsheetApp.getActive().getSheetByName(cfg.tab);
-  if (!sheet) return 'tab not found';
+  if (!sheet) return 'tab not found (skipped)';
   var lastRow = sheet.getLastRow();
-  var lastCol = sheet.getLastColumn();
   if (lastRow < 2) return 'no rows';
 
-  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var width = sheet.getLastColumn();
+  var headers = sheet.getRange(1, 1, 1, width).getValues()[0];
+  var lastHeader = -1;
+  headers.forEach(function (h, i) { if (String(h).trim() !== '') lastHeader = i; });
   var statusCol = headers.map(function (h) { return String(h).trim(); }).indexOf(STATUS_HEADER);
   if (statusCol < 0) {
-    statusCol = lastCol;
+    statusCol = lastHeader + 1;
+    if (statusCol + 1 > sheet.getMaxColumns()) sheet.insertColumnAfter(sheet.getMaxColumns());
     sheet.getRange(1, statusCol + 1).setValue(STATUS_HEADER);
-    lastCol += 1;
+    headers[statusCol] = STATUS_HEADER;
   }
   var idx = {};
   Object.keys(ALIASES).forEach(function (k) { idx[k] = colIndex_(headers, ALIASES[k]); });
   if (idx.call_id < 0) return 'no call id column found';
 
-  // Read the newest rows first: a 26,000-row log only needs its tail.
-  var scanFrom = Math.max(2, lastRow - 4000);
-  var values = sheet.getRange(scanFrom, 1, lastRow - scanFrom + 1, lastCol).getValues();
+  // Read only the small columns for the whole window; the large transcript
+  // and recording cells are read later, for the calls that qualify.
+  var from = Math.max(2, lastRow - SCAN_ROWS + 1);
+  var n = lastRow - from + 1;
+  var ids = column_(sheet, from, n, idx.call_id);
+  var done = column_(sheet, from, n, statusCol);
+  var statuses = column_(sheet, from, n, idx.call_status);
+  var durations = column_(sheet, from, n, idx.duration);
+  var times = column_(sheet, from, n, idx.call_time);
   var cutoff = new Date(Date.now() - LOOKBACK_DAYS * 86400000);
 
-  var pending = []; // {rowNumber, payload}
-  for (var i = values.length - 1; i >= 0 && pending.length < MAX_ROWS_PER_RUN; i--) {
-    var r = values[i];
-    if (String(r[statusCol]).trim() !== '') continue;
-    var callId = String(r[idx.call_id]).trim();
-    if (!callId) continue;
-    if (ONLY_ENDED && idx.call_status >= 0) {
-      var st = String(r[idx.call_status]).trim().toLowerCase();
-      if (st && st !== 'ended' && st !== 'completed') continue;
+  var pending = []; // row numbers, newest first
+  for (var i = n - 1; i >= 0 && pending.length < MAX_ROWS_PER_RUN; i--) {
+    if (String(done[i]).trim() !== '') continue;
+    if (String(ids[i]).trim() === '') continue;
+    if (statuses) {
+      var st = String(statuses[i]).trim().toLowerCase();
+      if (st && OK_STATUS.indexOf(st) < 0) continue;
     }
-    if (idx.call_time >= 0) {
-      var d = cellDate_(r[idx.call_time]);
+    if (durations) {
+      var sec = seconds_(durations[i], cfg.durationUnit);
+      if (sec !== null && sec < MIN_SECONDS) continue;
+    }
+    if (times) {
+      var d = cellDate_(times[i]);
       if (d && d < cutoff) continue;
     }
-    var outbound = idx.direction >= 0 && String(r[idx.direction]).toLowerCase() === 'outbound';
-    var mobile = outbound ? r[idx.to_number >= 0 ? idx.to_number : 0] : r[idx.from_number >= 0 ? idx.from_number : (idx.to_number >= 0 ? idx.to_number : 0)];
-    var callTime = idx.call_time >= 0 ? r[idx.call_time] : '';
-    pending.push({
-      rowNumber: scanFrom + i,
-      payload: {
-        call_id: callId,
-        agent_name: idx.agent_name >= 0 ? String(r[idx.agent_name]).trim() : '',
-        recording_url: idx.recording_url >= 0 ? String(r[idx.recording_url]).trim() : '',
-        transcript: idx.transcript >= 0 ? String(r[idx.transcript]) : '',
-        summary: idx.summary >= 0 ? String(r[idx.summary]) : '',
-        duration_seconds: idx.duration >= 0 ? toSeconds_(r[idx.duration], cfg.durationUnit) : null,
-        call_time: callTime instanceof Date ? Utilities.formatDate(callTime, 'Asia/Kolkata', "yyyy-MM-dd'T'HH:mm:ss") : String(callTime),
-        mobile: mobile === undefined ? '' : String(mobile),
-        disconnect_reason: idx.disconnect_reason >= 0 ? String(r[idx.disconnect_reason]) : '',
-      },
-    });
+    pending.push(from + i);
   }
   if (pending.length === 0) return 'nothing new';
 
+  var rows = pending.map(function (rowNumber) {
+    var r = sheet.getRange(rowNumber, 1, 1, width).getValues()[0];
+    var rawAgent = idx.agent_name >= 0 ? String(r[idx.agent_name]).trim() : '';
+    var agentId = idx.agent_id >= 0 ? String(r[idx.agent_id]).trim() : '';
+    var agent = rawAgent ? (AGENT_MAP[rawAgent] || rawAgent) : (AGENT_ID_MAP[agentId] || '');
+    var outbound = idx.direction >= 0 && String(r[idx.direction]).toLowerCase() === 'outbound';
+    var mobile = '';
+    if (outbound && idx.to_number >= 0) mobile = r[idx.to_number];
+    else if (idx.from_number >= 0) mobile = r[idx.from_number];
+    else if (idx.to_number >= 0) mobile = r[idx.to_number];
+    var t = idx.call_time >= 0 ? r[idx.call_time] : '';
+    var sec2 = idx.duration >= 0 ? seconds_(r[idx.duration], cfg.durationUnit) : null;
+    return {
+      rowNumber: rowNumber,
+      payload: {
+        call_id: String(r[idx.call_id]).trim(),
+        agent_name: agent,
+        recording_url: idx.recording_url >= 0 ? String(r[idx.recording_url]).trim() : '',
+        transcript: idx.transcript >= 0 ? String(r[idx.transcript]) : '',
+        summary: idx.summary >= 0 ? String(r[idx.summary]) : '',
+        duration_seconds: sec2,
+        call_time: t instanceof Date ? Utilities.formatDate(t, 'Asia/Kolkata', "yyyy-MM-dd'T'HH:mm:ss") : String(t),
+        mobile: String(mobile),
+        disconnect_reason: idx.disconnect_reason >= 0 ? String(r[idx.disconnect_reason]) : '',
+      },
+    };
+  });
+
   var sent = 0, audited = 0, failed = 0;
   var label = (cfg.source === 'karta' ? 'Karta' : 'Convozen') + ' sheet ' + Utilities.formatDate(new Date(), 'Asia/Kolkata', 'yyyy-MM-dd HH:mm');
-  for (var c = 0; c < pending.length; c += CHUNK) {
-    var part = pending.slice(c, c + CHUNK);
-    var lastChunk = c + CHUNK >= pending.length;
+  for (var c = 0; c < rows.length; c += CHUNK) {
+    var part = rows.slice(c, c + CHUNK);
+    var lastChunk = c + CHUNK >= rows.length;
     var res = UrlFetchApp.fetch(OTIS_URL + '?key=' + encodeURIComponent(key) + (lastChunk ? '&drive=1' : ''), {
       method: 'post',
       contentType: 'application/json',
@@ -162,11 +216,11 @@ function syncTab_(cfg, key) {
       Logger.log('Otis answered ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 300));
       continue;
     }
-    var out = JSON.parse(res.getContentText());
-    audited += out.audited || 0;
+    audited += JSON.parse(res.getContentText()).audited || 0;
     var stamp = 'sent ' + Utilities.formatDate(new Date(), 'Asia/Kolkata', 'yyyy-MM-dd HH:mm');
-    part.forEach(function (p) { sheet.getRange(p.rowNumber, statusCol + 1).setValue(stamp); });
+    var a1 = part.map(function (p) { return sheet.getRange(p.rowNumber, statusCol + 1).getA1Notation(); });
+    sheet.getRangeList(a1).setValue(stamp);
     sent += part.length;
   }
-  return 'sent ' + sent + ' rows, ' + audited + ' audited by Otis' + (failed ? ', ' + failed + ' failed (see Executions log)' : '');
+  return 'sent ' + sent + ' calls, ' + audited + ' audited by Otis' + (failed ? ', ' + failed + ' failed (see Executions log)' : '');
 }
