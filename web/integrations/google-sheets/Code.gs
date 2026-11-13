@@ -20,6 +20,7 @@ var MAX_ROWS_PER_RUN = 300; // rows sent per run per tab (older unsent rows go i
 var CHUNK = 50;            // rows per request
 var STATUS_HEADER = 'Otis Status';
 var ONLY_ENDED = true;     // skip rows whose call_status is not "ended" (when the column exists)
+var TRIGGER_MINUTES = 30;  // how often the automatic sync runs (1, 5, 10, 15 or 30)
 
 // The secret is stored in Script Properties (Project Settings), not in this file:
 //   name: OTIS_KEY   value: the CRON_SECRET from Vercel
@@ -51,12 +52,12 @@ function syncNow() {
   Logger.log(summary.join('\n'));
 }
 
-/** Run this once to make the sync run every hour. */
+/** Run this once to make the sync run automatically (every TRIGGER_MINUTES). */
 function installHourlyTrigger() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'syncNow') ScriptApp.deleteTrigger(t);
   });
-  ScriptApp.newTrigger('syncNow').timeBased().everyHours(1).create();
+  ScriptApp.newTrigger('syncNow').timeBased().everyMinutes(TRIGGER_MINUTES).create();
 }
 
 // ---- Implementation --------------------------------------------------------
@@ -149,7 +150,8 @@ function syncTab_(cfg, key) {
   var label = (cfg.source === 'karta' ? 'Karta' : 'Convozen') + ' sheet ' + Utilities.formatDate(new Date(), 'Asia/Kolkata', 'yyyy-MM-dd HH:mm');
   for (var c = 0; c < pending.length; c += CHUNK) {
     var part = pending.slice(c, c + CHUNK);
-    var res = UrlFetchApp.fetch(OTIS_URL + '?key=' + encodeURIComponent(key), {
+    var lastChunk = c + CHUNK >= pending.length;
+    var res = UrlFetchApp.fetch(OTIS_URL + '?key=' + encodeURIComponent(key) + (lastChunk ? '&drive=1' : ''), {
       method: 'post',
       contentType: 'application/json',
       payload: JSON.stringify({ source: cfg.source, label: label, rows: part.map(function (p) { return p.payload; }) }),

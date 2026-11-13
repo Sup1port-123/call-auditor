@@ -1,6 +1,6 @@
 # Audit calls automatically from a Google Sheet
 
-New rows in a Karta or Convozen sheet are sent to Otis every hour. Otis audits
+New rows in a Karta or Convozen sheet are sent to Otis every 30 minutes. Otis audits
 them (from the transcript when the sheet has one, otherwise from the recording),
 groups them into one batch per agent, and emails the batch report with the Excel
 attached when a batch finishes.
@@ -21,7 +21,7 @@ attached when a batch finishes.
 5. Select `syncNow` and press **Run**; accept the Google permissions. A
    column `Otis Status` appears and the newest rows are marked `sent ...`.
 6. Select `installHourlyTrigger` and press **Run** once. The sync now runs
-   every hour.
+   automatically (every `TRIGGER_MINUTES`, default 30).
 
 ## Notes
 

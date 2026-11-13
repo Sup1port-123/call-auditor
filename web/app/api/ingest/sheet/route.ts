@@ -134,8 +134,10 @@ export async function POST(req: Request) {
     batches.push({ id: batchId, label: batchLabel, agent: agentName, total: items.length });
   }
 
-  // Start scoring right away; the process-batches cron finishes anything left.
-  if (batches.length > 0) {
+  // Start scoring right away when asked (the sync script sets drive=1 on the
+  // last chunk of a run, so overlapping runs do not flood the scoring API);
+  // the process-batches cron finishes anything left.
+  if (batches.length > 0 && url.searchParams.get("drive") === "1") {
     const prod = process.env.VERCEL_PROJECT_PRODUCTION_URL;
     const base = prod ? `https://${prod}` : url.origin;
     const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
