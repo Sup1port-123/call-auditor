@@ -533,8 +533,18 @@ export async function generateAndSendReport(opts: { emails: string[]; istDate: s
 
   // One combined email for every agent (inbound and outbound), with a single
   // Excel of the day's audits attached.
-  if (rows.length === 0) return { inboundCount: 0, outboundCount: 0 };
   const displayDate = formatDisplayDate(opts.istDate);
+  if (rows.length === 0) {
+    // Still send something, so a quiet day (or a test on a day with no audits)
+    // is not mistaken for a broken email setup.
+    await sendReportEmail({
+      to: opts.emails,
+      subject: `Otis Daily Audit Report — ${displayDate} · no calls audited`,
+      html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:760px;margin:0 auto;color:#111;">${emailHeader(`📊 Otis Daily Audit Report — ${displayDate}`, "No calls were audited on this day", "#1f3a5f")}<div style="padding:24px 0;font-size:14px;">No completed audits were found for ${displayDate} (IST). If calls were expected, check that the Google Sheet sync or batch uploads ran and that their audits finished.</div></div>`,
+      filename: `otis-daily-audit-report-${opts.istDate}.xlsx`, xlsx: allXlsx,
+    });
+    return { inboundCount: 0, outboundCount: 0 };
+  }
   const scored = rows.filter(r => r.overall_score != null);
   const avgPct = scored.length > 0 ? Math.round(scored.reduce((sum, r) => sum + (r.overall_score ?? 0), 0) / scored.length * 20) : 0;
   const agentNames = [...new Set(rows.map(r => extractAgentName(r)).filter(n => n !== "Unknown Agent"))];
