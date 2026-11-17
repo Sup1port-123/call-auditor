@@ -26,7 +26,9 @@ does not have.
    `https://<production-domain>/api/ingest/sheet` and check the `SHEETS` list
    (tab name, `karta` or `convozen`, duration unit).
 4. **Project Settings > Script properties > Add**: name `OTIS_KEY`, value the
-   `CRON_SECRET`.
+   `CRON_SECRET`. If the domain shows a Vercel login page, also add `OTIS_BYPASS`
+   with the secret from Vercel > Settings > Deployment Protection > Protection
+   Bypass for Automation (this keeps the app private for everyone else).
 5. Select `syncNow` and press **Run**; accept the Google permissions. A
    column `Otis Status` appears and the newest rows are marked `sent ...`.
 6. Select `installHourlyTrigger` and press **Run** once. The sync now runs

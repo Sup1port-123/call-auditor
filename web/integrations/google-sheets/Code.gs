@@ -9,7 +9,7 @@
  */
 
 // ---- Settings -------------------------------------------------------------
-var OTIS_URL = 'https://YOUR-PRODUCTION-DOMAIN.vercel.app/api/ingest/sheet'; // public production domain
+var OTIS_URL = 'https://call-auditor-otis4.vercel.app/api/ingest/sheet';
 
 // Tabs to read. The same list works in both spreadsheets: a tab that is not
 // in the open spreadsheet is skipped.
@@ -45,8 +45,10 @@ var AGENT_ID_MAP = {
   'agent_GP02_0000059413': 'Gro Score',
 };
 
-// The secret is stored in Script Properties (Project Settings), not in this file:
-//   name: OTIS_KEY   value: the CRON_SECRET from Vercel
+// Secrets are stored in Script Properties (Project Settings), not in this file:
+//   OTIS_KEY     the CRON_SECRET from Vercel
+//   OTIS_BYPASS  (only if Vercel Authentication is on) the "Protection Bypass for
+//                Automation" secret from Vercel > Settings > Deployment Protection
 
 // Header names (matched ignoring case, spaces and symbols) for each field.
 var ALIASES = {
@@ -205,9 +207,11 @@ function syncTab_(cfg, key) {
   for (var c = 0; c < rows.length; c += CHUNK) {
     var part = rows.slice(c, c + CHUNK);
     var lastChunk = c + CHUNK >= rows.length;
+    var bypass = PropertiesService.getScriptProperties().getProperty('OTIS_BYPASS');
     var res = UrlFetchApp.fetch(OTIS_URL + '?key=' + encodeURIComponent(key) + (lastChunk ? '&drive=1' : ''), {
       method: 'post',
       contentType: 'application/json',
+      headers: bypass ? { 'x-vercel-protection-bypass': bypass } : {},
       payload: JSON.stringify({ source: cfg.source, label: label, rows: part.map(function (p) { return p.payload; }) }),
       muteHttpExceptions: true,
     });
