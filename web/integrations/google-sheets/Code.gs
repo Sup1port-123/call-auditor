@@ -1,8 +1,9 @@
 /**
  * Otis - audit new calls from a Google Sheet automatically.
  *
- * Paste this into each sheet (Karta and Convozen): Extensions > Apps Script.
- * Then follow README.md. Every run finds calls that are long enough and not sent
+ * One script for both sheets (Karta and Convozen): it opens each sheet by its id,
+ * so it works from a standalone Apps Script project or from one opened through
+ * Extensions > Apps Script in either sheet. Then follow README.md. Every run finds calls that are long enough and not sent
  * yet, posts them to Otis (which audits them and emails the batch report with
  * the Excel attached) and writes "sent" in an "Otis Status" column so a row is
  * never sent twice.
@@ -11,13 +12,14 @@
 // ---- Settings -------------------------------------------------------------
 var OTIS_URL = 'https://call-auditor-otis4.vercel.app/api/ingest/sheet';
 
-// Tabs to read. The same list works in both spreadsheets: a tab that is not
-// in the open spreadsheet is skipped.
+// Tabs to read.
+//   spreadsheetId: the id in the sheet's address (docs.google.com/spreadsheets/d/<id>/edit);
+//                  leave it out to use the spreadsheet this script is attached to
 //   source: 'karta' or 'convozen'
 //   durationUnit: unit of the call-duration column ('seconds' or 'minutes')
 var SHEETS = [
-  { tab: 'ai_karta_logs', source: 'karta', durationUnit: 'seconds' },
-  { tab: 'ai_convozen_logs', source: 'convozen', durationUnit: 'seconds' },
+  { spreadsheetId: '17fMDdhecRdmaXs5abZD3yFx2m3tQ7pneLIrWKdIbLxo', tab: 'ai_karta_logs', source: 'karta', durationUnit: 'seconds' },
+  { spreadsheetId: '1ysTOFI3kqNTSQ2_cE6zTOhM5US4bmIUh03UpkqnDnUQ', tab: 'ai_convozen_logs', source: 'convozen', durationUnit: 'seconds' },
 ];
 
 var MIN_SECONDS = 60;       // calls shorter than this are not audited
@@ -123,7 +125,8 @@ function column_(sheet, from, n, idx) {
 }
 
 function syncTab_(cfg, key) {
-  var sheet = SpreadsheetApp.getActive().getSheetByName(cfg.tab);
+  var book = cfg.spreadsheetId ? SpreadsheetApp.openById(cfg.spreadsheetId) : SpreadsheetApp.getActive();
+  var sheet = book.getSheetByName(cfg.tab);
   if (!sheet) return 'tab not found (skipped)';
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return 'no rows';
