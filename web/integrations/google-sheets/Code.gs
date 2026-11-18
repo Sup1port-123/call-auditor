@@ -89,6 +89,26 @@ function installHourlyTrigger() {
   ScriptApp.newTrigger('syncNow').timeBased().everyMinutes(TRIGGER_MINUTES).create();
 }
 
+/**
+ * Keeps scoring moving: asks Otis to work through batches that are not finished.
+ * Run every few minutes by installTriggers(), so no outside scheduler is needed.
+ */
+function processNow() {
+  var p = PropertiesService.getScriptProperties();
+  var bypass = p.getProperty('OTIS_BYPASS');
+  var res = UrlFetchApp.fetch(
+    OTIS_URL.replace('/api/ingest/sheet', '/api/cron/process-batches') + '?key=' + encodeURIComponent(p.getProperty('OTIS_KEY')),
+    { headers: bypass ? { 'x-vercel-protection-bypass': bypass } : {}, muteHttpExceptions: true });
+  Logger.log(res.getResponseCode() + ' ' + res.getContentText().slice(0, 200));
+}
+
+/** Run this once: sync every TRIGGER_MINUTES and scoring every 5 minutes. */
+function installTriggers() {
+  ScriptApp.getProjectTriggers().forEach(function (t) { ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('syncNow').timeBased().everyMinutes(TRIGGER_MINUTES).create();
+  ScriptApp.newTrigger('processNow').timeBased().everyMinutes(5).create();
+}
+
 // ---- Implementation --------------------------------------------------------
 
 function norm_(s) { return String(s).toLowerCase().replace(/[^a-z0-9]/g, ''); }
