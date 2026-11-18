@@ -149,7 +149,8 @@ ${focusHtml}
 
   try {
     await transporter.sendMail({
-      from: `"Otis AI Auditor" <${fromAddress}>`,
+      // Use the sender exactly as configured — same as the daily report, which Brevo accepts.
+      from: fromAddress,
       to: RECIPIENTS,
       subject: `Otis — Audit Complete · ${dateStr}`,
       html,
