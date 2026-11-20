@@ -341,7 +341,7 @@ function renderQueryReasons(rows: ReportRow[]): string {
     if (!entry.ids.find(i => i.auditId === row.id)) entry.ids.push({ auditId: row.id, label });
   }
   if (reasons.size === 0) return "";
-  const sorted = Array.from(reasons.entries()).sort((a, b) => b[1].count - a[1].count).slice(0, 5);
+  const sorted = Array.from(reasons.entries()).sort((a, b) => b[1].count - a[1].count).slice(0, 8);
   const total = sorted.reduce((s, e) => s + e[1].count, 0);
   const reasonRows = sorted.map(function(e: [string, { count: number; ids: InsightId[] }]) {
     const reason = e[0]; const count = e[1].count; const ids = e[1].ids;
@@ -349,9 +349,43 @@ function renderQueryReasons(rows: ReportRow[]): string {
     const idLinks = ids.slice(0, 5).map(auditLink).join(', ');
     return '<tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:9px 12px;"><div style="font-weight:500;">' + reason + '</div><div style="font-size:11px;color:#9ca3af;margin-top:2px;">Call IDs: ' + idLinks + '</div></td><td style="padding:9px 12px;text-align:center;font-weight:600;">' + count + '</td><td style="padding:9px 12px;"><div style="background:#e5e7eb;border-radius:4px;height:10px;width:100%;max-width:160px;"><div style="background:#6366f1;border-radius:4px;height:10px;width:' + p + '%;"></div></div></td><td style="padding:9px 12px;text-align:center;color:#6b7280;">' + p + '%</td></tr>';
   }).join('');
-  return '<h2 style="color:#111;font-size:16px;margin:28px 0 10px 0;font-weight:700;">&#128202; Top 5 Query Types Received</h2>' +
-    '<p style="color:#555;font-size:13px;margin:0 0 10px 0;">Highest-volume inbound query reasons today</p>' +
+  return '<h2 style="color:#111;font-size:16px;margin:28px 0 10px 0;font-weight:700;">&#128202; Major Queries Received (Top 8)</h2>' +
+    '<p style="color:#555;font-size:13px;margin:0 0 10px 0;">Highest-volume inbound query reasons for the day</p>' +
     '<table style="width:100%;border-collapse:collapse;font-size:13px;background:#fff;border:1px solid #e5e7eb;"><thead><tr style="background:#f3f4f6;text-align:left;"><th style="padding:9px 12px;">Query Type</th><th style="padding:9px 12px;text-align:center;">Count</th><th style="padding:9px 12px;">Distribution</th><th style="padding:9px 12px;text-align:center;">%</th></tr></thead><tbody>' + reasonRows + '</tbody></table>';
+}
+
+// Share of inbound calls on which a callback / follow-up was scheduled. A call
+// counts when the "asked reason before callback" check was applicable (its
+// evidence does not say "not applicable"), or the AI's call reason mentions a
+// callback.
+function callbackStats(rows: ReportRow[]): { total: number; scheduled: number; reasonAsked: number } {
+  let total = 0, scheduled = 0, reasonAsked = 0;
+  for (const row of rows) {
+    if (!row.compliance_json || row.compliance_json === "{}") continue;
+    let parsed: Record<string, unknown>;
+    try { parsed = JSON.parse(row.compliance_json) as Record<string, unknown>; } catch { continue; }
+    total++;
+    const check = parsed["asked_gp_reason_before_callback"] as { passed?: boolean; evidence?: string } | undefined;
+    const notApplicable = !check || /not applicable|no callback/i.test(check.evidence ?? "");
+    const reason = typeof parsed._call_reason === "string" ? parsed._call_reason : "";
+    const hasCallback = !notApplicable || /call ?back|schedul/i.test(reason);
+    if (!hasCallback) continue;
+    scheduled++;
+    if (check && !notApplicable && check.passed) reasonAsked++;
+  }
+  return { total, scheduled, reasonAsked };
+}
+
+function renderCallScheduling(rows: ReportRow[]): string {
+  const { total, scheduled, reasonAsked } = callbackStats(rows);
+  if (total === 0) return "";
+  const pct = Math.round((scheduled / total) * 100);
+  const properPct = scheduled > 0 ? Math.round((reasonAsked / scheduled) * 100) : 0;
+  return '<h2 style="color:#111;font-size:16px;margin:28px 0 10px 0;font-weight:700;">&#128197; Call Scheduling (Callbacks)</h2>' +
+    '<table style="width:100%;border-collapse:collapse;font-size:13px;background:#fff;border:1px solid #e5e7eb;"><tbody>' +
+    '<tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:9px 12px;">Inbound calls with a callback / follow-up scheduled</td><td style="padding:9px 12px;text-align:right;font-weight:600;">' + scheduled + ' of ' + total + ' (' + pct + '%)</td></tr>' +
+    '<tr><td style="padding:9px 12px;">Of those, agent asked the reason before scheduling</td><td style="padding:9px 12px;text-align:right;font-weight:600;">' + reasonAsked + ' of ' + scheduled + ' (' + properPct + '%)</td></tr>' +
+    '</tbody></table>';
 }
 
 function renderInboundComplianceSection(rows: ReportRow[]): string {
@@ -440,6 +474,7 @@ async function buildInboundHtml(rows: ReportRow[], istDate: string): Promise<str
   ]);
   const agentTable = renderAgentTable(rows);
   const queryReasons = renderQueryReasons(rows);
+  const callScheduling = renderCallScheduling(rows);
   const complianceSection = renderInboundComplianceSection(rows);
   const badCallsSection = renderCallSection(badGroups, "🔻", "Calls Needing Attention (Score < 60%)", "#dc2626");
   const goodCallsSection = renderCallSection(goodGroups, "⭐", "Best Calls (Score ≥ 80%)", "#16a34a");
@@ -453,6 +488,7 @@ async function buildInboundHtml(rows: ReportRow[], istDate: string): Promise<str
       ${stats}
       ${agentTable}
       ${queryReasons}
+      ${callScheduling}
       ${weaknessInsights}
       ${strengthInsights}
       ${transferReasons}

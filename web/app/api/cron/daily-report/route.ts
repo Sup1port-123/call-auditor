@@ -78,9 +78,12 @@ export async function GET(req: Request) {
       }
     }
 
+    // The report goes out in the morning and covers the previous IST day
+    // (day-1), so a full day of audits is in it.
+    const reportDate = istParts(Date.now() - 24 * 60 * 60 * 1000).date;
     const { inboundCount, outboundCount } = await generateAndSendReport({
       emails,
-      istDate: date,
+      istDate: reportDate,
     });
 
     if (!force) {
@@ -95,6 +98,7 @@ export async function GET(req: Request) {
       inboundCount,
       outboundCount,
       date,
+      reportDate,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
