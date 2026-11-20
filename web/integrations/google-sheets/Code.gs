@@ -47,10 +47,15 @@ var AGENT_MAP = {
 function isExcluded_(agentName, agentId) {
   return /gro ?score/i.test(agentName) || /GP02/i.test(agentId);
 }
-// Used when a row has no agent name: Convozen agentId -> Otis agent.
+// Agent id -> Otis agent, for both sheets. The id is checked first; the agent name
+// (AGENT_MAP above) is the fallback for an id that is not listed. Add one line
+// here for every new campaign.
 var AGENT_ID_MAP = {
-  'agent_GP01_0000049042': 'Inbound Support',
-  'agent_GP02_0000059413': 'Gro Score',
+  '6861ZW': 'Welcome Call Agent-',              // Karta: Welcome (lead + sales)
+  '6863W3': 'Inbound Support',                  // Karta: Inbound Support - Tara Live
+  '6975IO': 'Bajaj EMI',                        // Karta: Bajaj_EMI
+  'agent_GP01_0000049042': 'Inbound Support',   // Convozen: Tara inbound
+  'agent_GP02_0000059413': 'Gro Score',         // Convozen: Gro Score (skipped)
 };
 
 // Secrets are stored in Script Properties (Project Settings), not in this file:
@@ -210,7 +215,7 @@ function syncTab_(cfg, key) {
     var r = sheet.getRange(rowNumber, 1, 1, width).getValues()[0];
     var rawAgent = idx.agent_name >= 0 ? String(r[idx.agent_name]).trim() : '';
     var agentId = idx.agent_id >= 0 ? String(r[idx.agent_id]).trim() : '';
-    var agent = rawAgent ? (AGENT_MAP[rawAgent] || rawAgent) : (AGENT_ID_MAP[agentId] || '');
+    var agent = AGENT_ID_MAP[agentId] || (rawAgent ? (AGENT_MAP[rawAgent] || rawAgent) : '');
     var outbound = idx.direction >= 0 && String(r[idx.direction]).toLowerCase() === 'outbound';
     var mobile = '';
     if (outbound && idx.to_number >= 0) mobile = r[idx.to_number];
