@@ -85,11 +85,32 @@ var OK_STATUS = ['ended', 'completed', 'connected', 'success', 'answered'];
 
 /** Run this by hand once to authorise the script and test it. */
 function syncNow() {
-  var key = PropertiesService.getScriptProperties().getProperty('OTIS_KEY');
-  if (!key) throw new Error('Add the script property OTIS_KEY (Project Settings > Script properties).');
-  var summary = [];
-  SHEETS.forEach(function (cfg) { summary.push(cfg.tab + ': ' + syncTab_(cfg, key)); });
-  Logger.log(summary.join('\n'));
+  try {
+    var key = PropertiesService.getScriptProperties().getProperty('OTIS_KEY');
+    if (!key) throw new Error('Add the script property OTIS_KEY (Project Settings > Script properties).');
+    var summary = [];
+    SHEETS.forEach(function (cfg) { summary.push(cfg.tab + ': ' + syncTab_(cfg, key)); });
+    Logger.log(summary.join('\n'));
+    if (/failed/.test(summary.join(' '))) alert_('Otis sheet sync: some calls failed', summary.join('\n'));
+  } catch (e) {
+    alert_('Otis sheet sync crashed', String(e && e.stack ? e.stack : e));
+    throw e;
+  }
+}
+
+// Emails a problem to the script owner (or to the script property ALERT_EMAIL).
+// At most one email every 2 hours, so a long outage does not flood the inbox.
+function alert_(subject, body) {
+  try {
+    var p = PropertiesService.getScriptProperties();
+    var last = Number(p.getProperty('LAST_ALERT_MS') || 0);
+    if (Date.now() - last < 2 * 3600 * 1000) return;
+    p.setProperty('LAST_ALERT_MS', String(Date.now()));
+    var to = p.getProperty('ALERT_EMAIL') || Session.getEffectiveUser().getEmail();
+    MailApp.sendEmail(to, subject, body + '\n\nTime: ' + Utilities.formatDate(new Date(), 'Asia/Kolkata', 'yyyy-MM-dd HH:mm') + ' IST');
+  } catch (e2) {
+    Logger.log('Could not send alert: ' + e2);
+  }
 }
 
 /** Run this once to make the sync run automatically (every TRIGGER_MINUTES). */
@@ -105,12 +126,20 @@ function installHourlyTrigger() {
  * Run every few minutes by installTriggers(), so no outside scheduler is needed.
  */
 function processNow() {
-  var p = PropertiesService.getScriptProperties();
-  var bypass = p.getProperty('OTIS_BYPASS');
-  var res = UrlFetchApp.fetch(
-    OTIS_URL.replace('/api/ingest/sheet', '/api/cron/process-batches') + '?key=' + encodeURIComponent(p.getProperty('OTIS_KEY')),
-    { headers: bypass ? { 'x-vercel-protection-bypass': bypass } : {}, muteHttpExceptions: true });
-  Logger.log(res.getResponseCode() + ' ' + res.getContentText().slice(0, 200));
+  try {
+    var p = PropertiesService.getScriptProperties();
+    var bypass = p.getProperty('OTIS_BYPASS');
+    var res = UrlFetchApp.fetch(
+      OTIS_URL.replace('/api/ingest/sheet', '/api/cron/process-batches') + '?key=' + encodeURIComponent(p.getProperty('OTIS_KEY')),
+      { headers: bypass ? { 'x-vercel-protection-bypass': bypass } : {}, muteHttpExceptions: true });
+    Logger.log(res.getResponseCode() + ' ' + res.getContentText().slice(0, 200));
+    if (res.getResponseCode() !== 200) {
+      alert_('Otis scoring is not running', 'Otis answered ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 300));
+    }
+  } catch (e) {
+    alert_('Otis scoring crashed', String(e && e.stack ? e.stack : e));
+    throw e;
+  }
 }
 
 /** Run this once: sync every TRIGGER_MINUTES and scoring every 5 minutes. */

@@ -538,6 +538,23 @@ async function buildOutboundHtml(rows: ReportRow[], istDate: string): Promise<st
   </div>`;
 }
 
+// A one-line health check for the top of the report: how many audits were
+// created in the last 24 hours and how many fresh ones are still waiting. A
+// zero means the sheet sync or scoring has probably stopped.
+async function buildHealthHtml(): Promise<string> {
+  const supabase = createAdminClient();
+  const since = new Date(Date.now() - 24 * 3600_000).toISOString();
+  const freshSince = new Date(Date.now() - 2 * 86_400_000).toISOString();
+  const { count: created } = await supabase.from("audits").select("id", { count: "exact", head: true }).gte("created_at", since);
+  const { count: pending } = await supabase.from("audits").select("id", { count: "exact", head: true }).in("status", ["queued", "transcribing", "scoring"]).gte("timestamp", freshSince);
+  const stopped = (created ?? 0) === 0;
+  const color = stopped ? "#dc2626" : (pending ?? 0) > 300 ? "#ca8a04" : "#16a34a";
+  const text = stopped
+    ? "No new audits were created in the last 24 hours — the Google Sheet sync or scoring may have stopped."
+    : `${created} audits created in the last 24 hours · ${pending ?? 0} recent audits still waiting to be scored.`;
+  return `<div style="margin:0 0 16px 0;padding:10px 14px;border-left:4px solid ${color};background:#f9fafb;font-size:13px;color:#111;"><b>System check:</b> ${text}</div>`;
+}
+
 export async function generateAndSendReport(opts: { emails: string[]; istDate: string }): Promise<{ inboundCount: number; outboundCount: number }> {
   const supabase = createAdminClient();
   const { gte, lte } = istDayRangeUtc(opts.istDate);
@@ -576,17 +593,19 @@ export async function generateAndSendReport(opts: { emails: string[]; istDate: s
     await sendReportEmail({
       to: opts.emails,
       subject: `Otis Daily Audit Report — ${displayDate} · no calls audited`,
-      html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:760px;margin:0 auto;color:#111;">${emailHeader(`📊 Otis Daily Audit Report — ${displayDate}`, "No calls were audited on this day", "#1f3a5f")}<div style="padding:24px 0;font-size:14px;">No completed audits were found for ${displayDate} (IST). If calls were expected, check that the Google Sheet sync or batch uploads ran and that their audits finished.</div></div>`,
+      html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:760px;margin:0 auto;color:#111;">${emailHeader(`📊 Otis Daily Audit Report — ${displayDate}`, "No calls were audited on this day", "#1f3a5f")}<div style="padding:24px 0;font-size:14px;">${await buildHealthHtml().catch(() => "")}No completed audits were found for ${displayDate} (IST). If calls were expected, check that the Google Sheet sync or batch uploads ran and that their audits finished.</div></div>`,
       filename: `otis-daily-audit-report-${opts.istDate}.xlsx`, xlsx: allXlsx,
     });
     return { inboundCount: 0, outboundCount: 0 };
   }
+  const healthHtml = await buildHealthHtml().catch(() => "");
   const scored = rows.filter(r => r.overall_score != null);
   const avgPct = scored.length > 0 ? Math.round(scored.reduce((sum, r) => sum + (r.overall_score ?? 0), 0) / scored.length * 20) : 0;
   const agentNames = [...new Set(rows.map(r => extractAgentName(r)).filter(n => n !== "Unknown Agent"))];
   const summary = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:760px;margin:0 auto;color:#111;">
     ${emailHeader(`📊 Otis Daily Audit Report — ${displayDate}`, `${rows.length} call${rows.length === 1 ? "" : "s"} audited across ${agentNames.length || 1} agent${agentNames.length === 1 ? "" : "s"}: ${inboundRows.length} inbound · ${outboundRows.length} outbound`, "#1f3a5f")}
     <div style="padding:24px 0;">
+      ${healthHtml}
       ${statsRow([
         { label: "Total Calls", value: rows.length },
         { label: "Inbound", value: inboundRows.length },
