@@ -555,15 +555,23 @@ async function buildHealthHtml(): Promise<string> {
   return `<div style="margin:0 0 16px 0;padding:10px 14px;border-left:4px solid ${color};background:#f9fafb;font-size:13px;color:#111;"><b>System check:</b> ${text}</div>`;
 }
 
-export async function generateAndSendReport(opts: { emails: string[]; istDate: string }): Promise<{ inboundCount: number; outboundCount: number }> {
+export async function generateAndSendReport(opts: {
+  emails: string[];
+  istDate: string;
+  // Interval report: audits finalised inside [gte, lte] (by audit time) instead
+  // of the calls of one IST day. `label` goes into the subject.
+  range?: { gte: string; lte: string; label: string };
+  skipIfEmpty?: boolean;
+}): Promise<{ inboundCount: number; outboundCount: number }> {
   const supabase = createAdminClient();
-  const { gte, lte } = istDayRangeUtc(opts.istDate);
+  const { gte, lte } = opts.range ?? istDayRangeUtc(opts.istDate);
+  const dateCol = opts.range ? "audited_at" : "timestamp";
 
   const { data: allRows, error } = await supabase
     .from("audits")
     .select("id, call_id, mobile, overall_score, summary, what_was_lacking, strengths, target, agent_id, compliance_json, agents(name)")
-    .gte("timestamp", gte)
-    .lte("timestamp", lte)
+    .gte(dateCol, gte)
+    .lte(dateCol, lte)
     .in("status", ["completed", "excluded"])
     .order("timestamp", { ascending: false })
     .limit(10000);
@@ -577,8 +585,8 @@ export async function generateAndSendReport(opts: { emails: string[]; istDate: s
   const { data: xlsxRows } = await supabase
     .from("audits")
     .select(AUDIT_EXPORT_COLUMNS)
-    .gte("timestamp", gte)
-    .lte("timestamp", lte)
+    .gte(dateCol, gte)
+    .lte(dateCol, lte)
     .order("timestamp", { ascending: false })
     .limit(10000);
 
@@ -586,7 +594,8 @@ export async function generateAndSendReport(opts: { emails: string[]; istDate: s
 
   // One combined email for every agent (inbound and outbound), with a single
   // Excel of the day's audits attached.
-  const displayDate = formatDisplayDate(opts.istDate);
+  const displayDate = opts.range ? opts.range.label : formatDisplayDate(opts.istDate);
+  if (rows.length === 0 && opts.skipIfEmpty) return { inboundCount: 0, outboundCount: 0 };
   if (rows.length === 0) {
     // Still send something, so a quiet day (or a test on a day with no audits)
     // is not mistaken for a broken email setup.

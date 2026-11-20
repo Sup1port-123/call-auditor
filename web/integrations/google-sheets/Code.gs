@@ -142,11 +142,28 @@ function processNow() {
   }
 }
 
-/** Run this once: sync every TRIGGER_MINUTES and scoring every 5 minutes. */
+/** Emails one combined audit report for the last 3 hours (installTriggers runs it every 3 hours). */
+function reportNow() {
+  try {
+    var p = PropertiesService.getScriptProperties();
+    var bypass = p.getProperty('OTIS_BYPASS');
+    var res = UrlFetchApp.fetch(
+      OTIS_URL.replace('/api/ingest/sheet', '/api/cron/interval-report') + '?key=' + encodeURIComponent(p.getProperty('OTIS_KEY')),
+      { headers: bypass ? { 'x-vercel-protection-bypass': bypass } : {}, muteHttpExceptions: true });
+    Logger.log(res.getResponseCode() + ' ' + res.getContentText().slice(0, 200));
+    if (res.getResponseCode() !== 200) alert_('Otis 3-hour report failed', 'Otis answered ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 300));
+  } catch (e) {
+    alert_('Otis 3-hour report crashed', String(e && e.stack ? e.stack : e));
+    throw e;
+  }
+}
+
+/** Run this once: sync every TRIGGER_MINUTES, scoring every 5 minutes, report every 3 hours. */
 function installTriggers() {
   ScriptApp.getProjectTriggers().forEach(function (t) { ScriptApp.deleteTrigger(t); });
   ScriptApp.newTrigger('syncNow').timeBased().everyMinutes(TRIGGER_MINUTES).create();
   ScriptApp.newTrigger('processNow').timeBased().everyMinutes(5).create();
+  ScriptApp.newTrigger('reportNow').timeBased().everyHours(3).create();
 }
 
 // ---- Implementation --------------------------------------------------------
