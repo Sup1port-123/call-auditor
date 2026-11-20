@@ -36,7 +36,17 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const batchIds = [...new Set((pending ?? []).map((r) => r.batch_id as string))];
+  // Only fresh batches are worked on. Batch ids start with their creation date
+  // (YYYYMMDD), so older batches that never finished are left alone instead of
+  // being scored (and emailed) days later. Override with PROCESS_MAX_AGE_DAYS.
+  const maxAgeDays = Number(process.env.PROCESS_MAX_AGE_DAYS ?? 2);
+  const cutoff = new Date(Date.now() + 5.5 * 3600_000 - maxAgeDays * 86_400_000)
+    .toISOString()
+    .slice(0, 10)
+    .replace(/-/g, "");
+  const allIds = [...new Set((pending ?? []).map((r) => r.batch_id as string))];
+  const batchIds = allIds.filter((id) => !/^\d{8}/.test(id) || id.slice(0, 8) >= cutoff);
+  const skippedOld = allIds.length - batchIds.length;
 
   // An audit is moved to "scoring" while it is being scored; if the function
   // running it was cut off it stays there for good. Put those back so they are
@@ -80,6 +90,7 @@ export async function GET(req: Request) {
 
   return NextResponse.json({
     batches: batchIds.length,
+    skipped_old_batches: skippedOld,
     runs,
     elapsed_ms: Date.now() - started,
   });
