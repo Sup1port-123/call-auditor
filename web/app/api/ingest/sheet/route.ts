@@ -15,6 +15,8 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const MAX_ROWS = 500;
+// At most this many calls are audited per campaign (agent, per vendor) each IST day.
+const DAILY_CAP = Number(process.env.DAILY_AUDIT_CAP_PER_CAMPAIGN ?? 100);
 // How long to keep driving the new batches after answering the sync script.
 const DRIVE_BUDGET_MS = 45_000;
 
@@ -77,7 +79,22 @@ export async function POST(req: Request) {
   const agentIdFor = (name: string) =>
     (agents ?? []).find((a) => a.name.toLowerCase().trim() === name.toLowerCase().trim())?.id ?? null;
 
-  const skipped = { duplicate: 0, too_short: 0, no_content: 0 };
+  const skipped = { duplicate: 0, too_short: 0, no_content: 0, daily_cap: 0 };
+
+  // Calls already audited today (IST) for a campaign count against its cap.
+  const istStart = new Date(`${new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10)}T00:00:00+05:30`).toISOString();
+  const sourceValue = source === "convozen" ? "convozen_call_details" : "batch";
+  const remaining = new Map<string, number>();
+  async function remainingFor(agentName: string): Promise<number> {
+    if (remaining.has(agentName)) return remaining.get(agentName)!;
+    let q = db.from("audits").select("id", { count: "exact", head: true }).eq("source", sourceValue).gte("created_at", istStart);
+    const aid = agentName === "No agent" ? null : agentIdFor(agentName);
+    q = aid ? q.eq("agent_id", aid) : q.is("agent_id", null);
+    const { count } = await q;
+    const left = Math.max(0, DAILY_CAP - (count ?? 0));
+    remaining.set(agentName, left);
+    return left;
+  }
   type Prepared = { row: SheetRow; transcript: string | null; seconds: number | null; recording: string | null };
   const byAgent = new Map<string, Prepared[]>();
   const seenNow = new Set<string>();
@@ -91,8 +108,11 @@ export async function POST(req: Request) {
       ? String(row.recording_url).trim().replace(/\s+/g, "")
       : null;
     if (transcript ? wordCount(transcript) < MIN_WORDS : !recording) { skipped.no_content++; continue; }
-    if (callId) seenNow.add(callId);
     const agentName = (row.agent_name ?? body.default_agent ?? "").trim() || "No agent";
+    const left = await remainingFor(agentName);
+    if (left <= 0) { skipped.daily_cap++; continue; }
+    remaining.set(agentName, left - 1);
+    if (callId) seenNow.add(callId);
     if (!byAgent.has(agentName)) byAgent.set(agentName, []);
     byAgent.get(agentName)!.push({ row, transcript, seconds, recording });
   }
