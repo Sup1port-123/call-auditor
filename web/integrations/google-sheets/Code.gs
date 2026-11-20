@@ -40,7 +40,13 @@ var AGENT_MAP = {
   'Welcome (lead + sales)': 'Welcome Call Agent-',
   'Arjun_Groscore': 'Gro Score',
   'CCdrop_GP': 'CC Drop GP',
+  'Bajaj_EMI': 'Bajaj EMI',
 };
+
+// Campaigns that are never audited (Gro Score runs on Convozen and is skipped).
+function isExcluded_(agentName, agentId) {
+  return /gro ?score/i.test(agentName) || /GP02/i.test(agentId);
+}
 // Used when a row has no agent name: Convozen agentId -> Otis agent.
 var AGENT_ID_MAP = {
   'agent_GP01_0000049042': 'Inbound Support',
@@ -175,6 +181,8 @@ function syncTab_(cfg, key) {
   var statuses = column_(sheet, from, n, idx.call_status);
   var durations = column_(sheet, from, n, idx.duration);
   var times = column_(sheet, from, n, idx.call_time);
+  var agentNames = column_(sheet, from, n, idx.agent_name);
+  var agentIds = column_(sheet, from, n, idx.agent_id);
   var cutoff = new Date(Date.now() - LOOKBACK_DAYS * 86400000);
 
   var pending = []; // row numbers, newest first
@@ -185,6 +193,7 @@ function syncTab_(cfg, key) {
       var st = String(statuses[i]).trim().toLowerCase();
       if (st && OK_STATUS.indexOf(st) < 0) continue;
     }
+    if (isExcluded_(agentNames ? String(agentNames[i]) : '', agentIds ? String(agentIds[i]) : '')) continue;
     if (durations) {
       var sec = seconds_(durations[i], cfg.durationUnit);
       if (sec !== null && sec < MIN_SECONDS) continue;
