@@ -80,8 +80,10 @@ export async function POST(
 </tr>`;
   }).join("");
 
-  const d = batchId.substring(0, 8);
-  const dateStr = `${d.substring(6, 8)} ${MONTHS[parseInt(d.substring(4, 6)) - 1]} ${d.substring(0, 4)}`;
+  // Batch ids start with their creation date (YYYYMMDD). For any other id fall
+  // back to today's IST date so the title never reads "undefined".
+  const idDate = /^\d{8}/.test(batchId) ? batchId.substring(0, 8) : new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10).replace(/-/g, "");
+  const dateStr = `${idDate.substring(6, 8)} ${MONTHS[parseInt(idDate.substring(4, 6)) - 1]} ${idDate.substring(0, 4)}`;
 
   // Special audit focus report (only when the batch has an audit focus)
   let focusHtml = "";
