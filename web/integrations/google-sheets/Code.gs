@@ -158,12 +158,29 @@ function reportNow() {
   }
 }
 
+/** Emails the once-a-day report (previous day) to Vijay, Sameer and Anjali. Runs at about 09:00 IST. */
+function dailyReportNow() {
+  try {
+    var p = PropertiesService.getScriptProperties();
+    var bypass = p.getProperty('OTIS_BYPASS');
+    var res = UrlFetchApp.fetch(
+      OTIS_URL.replace('/api/ingest/sheet', '/api/cron/daily-report') + '?key=' + encodeURIComponent(p.getProperty('OTIS_KEY')),
+      { headers: bypass ? { 'x-vercel-protection-bypass': bypass } : {}, muteHttpExceptions: true });
+    Logger.log(res.getResponseCode() + ' ' + res.getContentText().slice(0, 200));
+    if (res.getResponseCode() !== 200) alert_('Otis daily report failed', 'Otis answered ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 300));
+  } catch (e) {
+    alert_('Otis daily report crashed', String(e && e.stack ? e.stack : e));
+    throw e;
+  }
+}
+
 /** Run this once: sync every TRIGGER_MINUTES, scoring every 5 minutes, report every 3 hours. */
 function installTriggers() {
   ScriptApp.getProjectTriggers().forEach(function (t) { ScriptApp.deleteTrigger(t); });
   ScriptApp.newTrigger('syncNow').timeBased().everyMinutes(TRIGGER_MINUTES).create();
   ScriptApp.newTrigger('processNow').timeBased().everyMinutes(5).create();
   ScriptApp.newTrigger('reportNow').timeBased().everyHours(3).create();
+  ScriptApp.newTrigger('dailyReportNow').timeBased().atHour(9).nearMinute(0).inTimezone('Asia/Kolkata').everyDays(1).create();
 }
 
 // ---- Implementation --------------------------------------------------------

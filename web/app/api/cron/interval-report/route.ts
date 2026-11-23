@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { generateAndSendReport, parseEmails, type ReportSettings } from "@/lib/report";
+import { generateAndSendReport, INTERVAL_REPORT_RECIPIENTS } from "@/lib/report";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -26,14 +25,7 @@ export async function GET(req: Request) {
         req.headers.get("authorization") === `Bearer ${secret}`);
     if (!authorized) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-    const supabase = createAdminClient();
-    const { data: settings } = await supabase
-      .from("report_settings")
-      .select("*")
-      .eq("id", "default")
-      .maybeSingle<ReportSettings>();
-    if (!settings) return NextResponse.json({ skipped: "no settings row" });
-    const emails = parseEmails(settings.emails);
+    const emails = INTERVAL_REPORT_RECIPIENTS;
     if (emails.length === 0) return NextResponse.json({ skipped: "no recipients" });
 
     const toMs = Date.now();

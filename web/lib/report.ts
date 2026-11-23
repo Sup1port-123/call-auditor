@@ -40,6 +40,15 @@ export function parseHHMM(v: string | null | undefined): number | null {
   return h * 60 + min;
 }
 
+// Who gets which report. Override with the Vercel variables DAILY_REPORT_TO /
+// INTERVAL_REPORT_TO (comma-separated) if the lists change.
+export const DAILY_REPORT_RECIPIENTS = (
+  process.env.DAILY_REPORT_TO ?? "vijay.parkash@gromo.in,sameer.singh@gromo.in,anjali.munja@gromo.in"
+).split(",").map((e) => e.trim()).filter(Boolean);
+export const INTERVAL_REPORT_RECIPIENTS = (
+  process.env.INTERVAL_REPORT_TO ?? "anjali.munja@gromo.in,alwarquality_t@gromo.in"
+).split(",").map((e) => e.trim()).filter(Boolean);
+
 export function parseEmails(raw: string | null | undefined): string[] {
   if (!raw) return [];
   return raw.split(/[,\n;]/).map((s) => s.trim()).filter((s) => /.+@.+\..+/.test(s));
