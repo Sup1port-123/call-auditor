@@ -57,6 +57,7 @@ const CRITICAL_CHECKS: Record<string, string> = {
   no_prohibited_guarantees: "Gave a prohibited guarantee or promise",
   no_data_fabrication: "Made up / fabricated information",
   no_credential_request: "Asked the customer for credentials (OTP / PIN / password)",
+  followed_knowledge_base: "Did not follow the knowledge base",
 };
 const WRONG_INFO = /(incorrect|wrong|inaccurate|misleading|false|fabricat\w*|hallucinat\w*|misinform\w*)\s+(information|info|details|claims?|answers?|payout|product|eligibility|fees?)/i;
 
@@ -109,8 +110,8 @@ export async function checkCriticalAudits(): Promise<{ scanned: number; alerted:
     return `<tr><td style="padding:7px 10px;border-bottom:1px solid #eee;font-family:monospace;font-size:12px;">${link}</td><td style="padding:7px 10px;border-bottom:1px solid #eee;">${agentName(r)}</td><td style="padding:7px 10px;border-bottom:1px solid #eee;text-align:center;">${pct}</td><td style="padding:7px 10px;border-bottom:1px solid #eee;">${reasons.join("; ")}</td></tr>`;
   }).join("");
   await sendAlertEmail(
-    `🚨 Otis alert — ${hits.length} call${hits.length === 1 ? "" : "s"} with wrong or risky information`,
-    shell("Agent shared wrong or risky information", `<p>${hits.length} newly audited call${hits.length === 1 ? "" : "s"} need a look${hits.length > 40 ? " (first 40 shown)" : ""}:</p>
+    `🚨 Otis alert — ${hits.length} call${hits.length === 1 ? "" : "s"} with wrong information or not following the knowledge base`,
+    shell("Agent shared wrong information or did not follow the knowledge base", `<p>${hits.length} newly audited call${hits.length === 1 ? "" : "s"} need a look${hits.length > 40 ? " (first 40 shown)" : ""}:</p>
     <table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#f3f4f6;text-align:left;"><th style="padding:7px 10px;">Call</th><th style="padding:7px 10px;">Agent</th><th style="padding:7px 10px;">Score</th><th style="padding:7px 10px;">Why</th></tr></thead><tbody>${lines}</tbody></table>`),
   );
   await Promise.all(hits.map(({ r }) =>

@@ -415,7 +415,7 @@ let result: EvaluationResult | null = null;
 if (provider === "openai" && process.env.OPENAI_API_KEY)
 result = await withRetry(() => scoreWithOpenAI(systemPrompt, opts.transcript));
 else if (provider === "gemini" && process.env.GOOGLE_API_KEY)
-result = await withRetry(() => scoreWithGemini(systemPrompt, opts.transcript, rubric, opts.agentName, opts.customFocus));
+result = await withRetry(() => scoreWithGemini(systemPrompt, opts.transcript, rubric, opts.agentName, opts.customFocus, !!opts.knowledgeBase?.trim()));
 else if (provider === "anthropic" && process.env.ANTHROPIC_API_KEY)
 result = await withRetry(() => scoreWithClaude(systemPrompt, opts.transcript));
 if (result) {
@@ -617,6 +617,7 @@ transcript: string,
 rubric: RubricDimension[],
 agentName?: string,
 customFocus?: string,
+hasKnowledgeBase = false,
 ): Promise<EvaluationResult> {
 const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY! });
 const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
@@ -637,7 +638,7 @@ required: rubric.map((d) => d.key),
 };
 
 // Build compliance schema from the agent-appropriate checks
-const complianceChecks = getComplianceChecks(agentName);
+const complianceChecks = getComplianceChecks(agentName, hasKnowledgeBase);
 const complianceBlock = {
 type: Type.OBJECT,
 properties: Object.fromEntries(

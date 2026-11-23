@@ -263,12 +263,26 @@ export const GRO_SCORE_COMPLIANCE_CHECKS: ComplianceCheckDef[] = [
  * Inbound agents get the base 6 + 3 inbound-specific checks (9 total).
  * All other outbound agents get the base 6 Gromo script checks.
  */
-export function getComplianceChecks(agentName?: string | null): ComplianceCheckDef[] {
-  if (isGroScoreAgent(agentName)) return GRO_SCORE_COMPLIANCE_CHECKS;
-  if (isInboundAgent(agentName)) {
-    return [...SCRIPT_COMPLIANCE_CHECKS, ...INBOUND_COMPLIANCE_CHECKS];
-  }
-  return SCRIPT_COMPLIANCE_CHECKS;
+// Added for every agent that has a knowledge base: did the agent stay within it?
+export const KB_COMPLIANCE_CHECK: ComplianceCheckDef = {
+  key: "followed_knowledge_base",
+  name: "Followed the Knowledge Base",
+  instruction:
+    "Did the agent stay within the agent knowledge base provided below? " +
+    "Mark FAIL if the agent stated something that contradicts the knowledge base, gave facts, " +
+    "numbers, policies or steps the knowledge base does not support, skipped a required step or " +
+    "disclosure from it, or broke one of its guardrails. " +
+    "Mark PASS if the agent's statements and actions are consistent with the knowledge base. " +
+    "Quote the specific statement and the knowledge-base point it conflicts with as evidence.",
+};
+
+export function getComplianceChecks(agentName?: string | null, hasKnowledgeBase = false): ComplianceCheckDef[] {
+  const base = isGroScoreAgent(agentName)
+    ? GRO_SCORE_COMPLIANCE_CHECKS
+    : isInboundAgent(agentName)
+      ? [...SCRIPT_COMPLIANCE_CHECKS, ...INBOUND_COMPLIANCE_CHECKS]
+      : SCRIPT_COMPLIANCE_CHECKS;
+  return hasKnowledgeBase ? [...base, KB_COMPLIANCE_CHECK] : base;
 }
 
 
@@ -491,7 +505,7 @@ export function buildSystemPrompt(opts: {
     STRICTNESS_LEVELS.standard;
 
   // Get the right compliance checks for this agent type
-  const checks = getComplianceChecks(opts.agentName);
+  const checks = getComplianceChecks(opts.agentName, !!opts.knowledgeBase?.trim());
   const inbound = isInboundAgent(opts.agentName);
   const groScore = isGroScoreAgent(opts.agentName);
 
