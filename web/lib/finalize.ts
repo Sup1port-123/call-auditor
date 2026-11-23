@@ -240,10 +240,8 @@ needs_review,
 review_reason,
 }).eq("id", auditId);
 
-if (evaluation.overall_score < 5) {
-const { sendLowScoreAlert } = await import("@/lib/alert");
-sendLowScoreAlert({ auditId, agentName: agentName ?? "Unknown Agent", score: evaluation.overall_score, recommendations: evaluation.improvement_recommendations ?? [] }).catch(console.error);
-}
+// Alerts for alarming calls are sent by lib/alerts.ts (wrong information, quality drop),
+// not one email per low score.
 
 if (audit.batch_id) await checkAndSendBatchEmail(audit.batch_id).catch(console.error);
 

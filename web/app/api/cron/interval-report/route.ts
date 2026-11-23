@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { generateAndSendReport, INTERVAL_REPORT_RECIPIENTS } from "@/lib/report";
+import { checkQualityDrop } from "@/lib/alerts";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -40,7 +41,8 @@ export async function GET(req: Request) {
       },
       skipIfEmpty: true,
     });
-    return NextResponse.json({ sent: inboundCount + outboundCount > 0, inboundCount, outboundCount, hours: HOURS });
+    const quality = await checkQualityDrop(fromMs, toMs).catch((e) => ({ error: String(e) }));
+    return NextResponse.json({ sent: inboundCount + outboundCount > 0, inboundCount, outboundCount, hours: HOURS, quality });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[otis] interval-report crashed:", message);
