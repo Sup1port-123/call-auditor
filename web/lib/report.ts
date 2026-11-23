@@ -1,5 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-import { buildAuditsXlsx, AUDIT_EXPORT_COLUMNS } from "@/lib/audit-export";
+import { buildAuditsWorkbook, AUDIT_EXPORT_COLUMNS, vendorOf, type AuditExportRow } from "@/lib/audit-export";
 import {
   SCRIPT_COMPLIANCE_CHECKS,
   INBOUND_COMPLIANCE_CHECKS,
@@ -56,6 +56,7 @@ export function parseEmails(raw: string | null | undefined): string[] {
 
 type ReportRow = {
   id: string;
+  source: string | null;
   call_id: string | null;
   mobile: string | null;
   overall_score: number | null;
@@ -397,6 +398,34 @@ function renderCallScheduling(rows: ReportRow[]): string {
     '</tbody></table>';
 }
 
+// Inbound calls come from two vendors with different pipelines: Karta and
+// Convozen. Shown side by side so each can get its own feedback.
+function renderVendorSplit(rows: ReportRow[]): string {
+  const vendors: { name: string; match: (r: ReportRow) => boolean }[] = [
+    { name: "Karta", match: (r) => r.source === "batch" },
+    { name: "Convozen", match: (r) => r.source === "convozen_call_details" },
+  ];
+  const body = vendors.map(({ name, match }) => {
+    const vr = rows.filter(match);
+    const scored = vr.filter((r) => r.overall_score != null);
+    const pctV = scored.length > 0 ? Math.round((scored.reduce((a, r) => a + (r.overall_score ?? 0), 0) / scored.length) * 20) : null;
+    const low = scored.filter((r) => (r.overall_score ?? 5) < 3).length;
+    const cb = callbackStats(vr);
+    const cbPct = cb.total > 0 ? Math.round((cb.scheduled / cb.total) * 100) : 0;
+    const reasons = new Map<string, number>();
+    for (const r of vr) {
+      const reason = extractCallReason(r.compliance_json).toLowerCase().trim();
+      if (!reason || reason === "unknown") continue;
+      reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
+    }
+    const top = [...reasons.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => `${k} (${v})`).join(", ") || "-";
+    const color = pctV == null ? "#6b7280" : pctV >= 80 ? "#16a34a" : pctV >= 60 ? "#ca8a04" : "#dc2626";
+    return `<tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:9px 12px;font-weight:600;">${name}</td><td style="padding:9px 12px;text-align:center;">${vr.length}</td><td style="padding:9px 12px;text-align:center;font-weight:700;color:${color};">${pctV == null ? "-" : pctV + "%"}</td><td style="padding:9px 12px;text-align:center;">${low}</td><td style="padding:9px 12px;text-align:center;">${cb.scheduled} (${cbPct}%)</td><td style="padding:9px 12px;font-size:12px;">${top}</td></tr>`;
+  }).join("");
+  return '<h2 style="color:#111;font-size:16px;margin:28px 0 10px 0;font-weight:700;">&#127970; Inbound by Vendor — Karta vs Convozen</h2>' +
+    '<table style="width:100%;border-collapse:collapse;font-size:13px;background:#fff;border:1px solid #e5e7eb;"><thead><tr style="background:#f3f4f6;text-align:left;"><th style="padding:9px 12px;">Vendor</th><th style="padding:9px 12px;text-align:center;">Calls</th><th style="padding:9px 12px;text-align:center;">Quality</th><th style="padding:9px 12px;text-align:center;">Below 60%</th><th style="padding:9px 12px;text-align:center;">Callbacks</th><th style="padding:9px 12px;">Top queries</th></tr></thead><tbody>' + body + '</tbody></table>';
+}
+
 function renderInboundComplianceSection(rows: ReportRow[]): string {
   const allChecks = [...SCRIPT_COMPLIANCE_CHECKS, ...INBOUND_COMPLIANCE_CHECKS];
   const withData = rows.filter(r => r.compliance_json && r.compliance_json !== "{}");
@@ -484,6 +513,7 @@ async function buildInboundHtml(rows: ReportRow[], istDate: string): Promise<str
   const agentTable = renderAgentTable(rows);
   const queryReasons = renderQueryReasons(rows);
   const callScheduling = renderCallScheduling(rows);
+  const vendorSplit = renderVendorSplit(rows);
   const complianceSection = renderInboundComplianceSection(rows);
   const badCallsSection = renderCallSection(badGroups, "🔻", "Calls Needing Attention (Score < 60%)", "#dc2626");
   const goodCallsSection = renderCallSection(goodGroups, "⭐", "Best Calls (Score ≥ 80%)", "#16a34a");
@@ -496,6 +526,7 @@ async function buildInboundHtml(rows: ReportRow[], istDate: string): Promise<str
     <div style="padding:24px 0;">
       ${stats}
       ${agentTable}
+      ${vendorSplit}
       ${queryReasons}
       ${callScheduling}
       ${weaknessInsights}
@@ -578,7 +609,7 @@ export async function generateAndSendReport(opts: {
 
   const { data: allRows, error } = await supabase
     .from("audits")
-    .select("id, call_id, mobile, overall_score, summary, what_was_lacking, strengths, target, agent_id, compliance_json, agents(name)")
+    .select("id, source, call_id, mobile, overall_score, summary, what_was_lacking, strengths, target, agent_id, compliance_json, agents(name)")
     .gte(dateCol, gte)
     .lte(dateCol, lte)
     .in("status", ["completed", "excluded"])
@@ -599,7 +630,17 @@ export async function generateAndSendReport(opts: {
     .order("timestamp", { ascending: false })
     .limit(10000);
 
-  const allXlsx = await buildAuditsXlsx(xlsxRows ?? []);
+  // One workbook, separate sheets, so feedback can go to each vendor / team:
+  // Inbound - Karta, Inbound - Convozen, Outbound, plus everything together.
+  const xl = (xlsxRows ?? []) as unknown as AuditExportRow[];
+  const nameOf = (r: AuditExportRow) => { const a = r.agents; return (Array.isArray(a) ? a[0]?.name : a?.name) ?? ""; };
+  const inboundX = xl.filter((r) => isInboundAgent(nameOf(r) || "Unknown Agent"));
+  const allXlsx = await buildAuditsWorkbook([
+    { name: "Inbound - Karta", rows: inboundX.filter((r) => vendorOf(r) === "Karta") },
+    { name: "Inbound - Convozen", rows: inboundX.filter((r) => vendorOf(r) === "Convozen") },
+    { name: "Outbound", rows: xl.filter((r) => !isInboundAgent(nameOf(r) || "Unknown Agent")) },
+    { name: "All audits", rows: xl },
+  ]);
 
   // One combined email for every agent (inbound and outbound), with a single
   // Excel of the day's audits attached.

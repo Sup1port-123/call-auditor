@@ -7,9 +7,12 @@ import { parseFocusFromCompliance } from "./focus";
 // Single string literal — concatenating with `+` defeats supabase-js's
 // compile-time column parsing (the row type collapses to GenericStringError).
 export const AUDIT_EXPORT_COLUMNS =
-"id, target, timestamp, audited_at, duration_seconds, overall_score, review_status, llm_provider, summary, scores_json, strengths, what_was_lacking, recommendations_json, compliance_json, transcript";
+"id, call_id, source, target, timestamp, audited_at, duration_seconds, overall_score, review_status, llm_provider, summary, scores_json, strengths, what_was_lacking, recommendations_json, compliance_json, transcript, agents(name)";
 
 export type AuditExportRow = {
+call_id?: string | null;
+source?: string | null;
+agents?: { name: string } | { name: string }[] | null;
 target: string | null;
 timestamp: string | null;
 audited_at: string | null;
@@ -64,9 +67,18 @@ return {};
 // Build the exact .xlsx the dashboard download produces, from a set of audit
 // rows. Shared by the export route and the scheduled email report so they stay
 // byte-for-byte identical.
-export async function buildAuditsXlsx(
-rows: readonly AuditExportRow[],
-): Promise<Uint8Array> {
+function agentOf(r: AuditExportRow): string {
+const a = r.agents;
+return (Array.isArray(a) ? a[0]?.name : a?.name) ?? "";
+}
+
+export function vendorOf(r: AuditExportRow): string {
+if (r.source === "convozen_call_details") return "Convozen";
+if (r.source === "batch") return "Karta";
+return r.source ?? "";
+}
+
+function buildSheet(XLSX: typeof import("xlsx"), rows: readonly AuditExportRow[]) {
 // Dimensions are per-agent, so the columns are the union of every dimension
 // that appears across the exported rows, in first-seen order.
 const dimOrder: string[] = [];
@@ -95,6 +107,9 @@ const focusHeaders = hasFocusCols
 : [];
 
 const header = [
+"Call ID",
+"Agent",
+"Vendor",
 "Recording URL",
 "Date of uploading (IST)",
 "Date of auditing (IST)",
@@ -148,6 +163,9 @@ const focusCells = hasFocusCols
 const qualityPct = r.overall_score != null ? Math.round((r.overall_score / 5) * 100) : "";
 
 aoa.push([
+r.call_id ?? "",
+agentOf(r),
+vendorOf(r),
 r.target ?? "",
 fmtDateTime(r.timestamp),
 fmtDateTime(r.audited_at ?? r.timestamp),
@@ -167,9 +185,11 @@ r.llm_provider ?? "",
 ] as (string | number)[]);
 });
 
-const XLSX = await import("xlsx");
 const ws = XLSX.utils.aoa_to_sheet(aoa);
 ws["!cols"] = [
+{ wch: 38 },
+{ wch: 22 },
+{ wch: 11 },
 { wch: 56 },
 { wch: 18 },
 { wch: 18 },
@@ -187,8 +207,25 @@ ws["!cols"] = [
 { wch: 80 },
 { wch: 10 },
 ];
+return ws;
+}
+
+// One sheet per group (e.g. Inbound - Karta, Inbound - Convozen, Outbound), so
+// feedback can be shared with each vendor / team separately.
+export async function buildAuditsWorkbook(
+sheets: { name: string; rows: readonly AuditExportRow[] }[],
+): Promise<Uint8Array> {
+const XLSX = await import("xlsx");
 const wb = XLSX.utils.book_new();
-XLSX.utils.book_append_sheet(wb, ws, "Audits");
+for (const sh of sheets) {
+XLSX.utils.book_append_sheet(wb, buildSheet(XLSX, sh.rows), sh.name.slice(0, 31));
+}
 const buf: Buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
 return new Uint8Array(buf);
+}
+
+export async function buildAuditsXlsx(
+rows: readonly AuditExportRow[],
+): Promise<Uint8Array> {
+return buildAuditsWorkbook([{ name: "Audits", rows }]);
 }
