@@ -79,7 +79,11 @@ export async function POST(req: Request) {
   const agentIdFor = (name: string) =>
     (agents ?? []).find((a) => a.name.toLowerCase().trim() === name.toLowerCase().trim())?.id ?? null;
 
-  const skipped = { duplicate: 0, too_short: 0, no_content: 0, daily_cap: 0 };
+  const skipped = { duplicate: 0, too_short: 0, no_content: 0, daily_cap: 0, earlier_day: 0 };
+
+  // Live calls only: a call made on an earlier IST day is not audited.
+  const istToday = new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10);
+  const liveOnly = process.env.LIVE_ONLY !== "off";
 
   // Calls already audited today (IST) for a campaign count against its cap.
   const istStart = new Date(`${new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10)}T00:00:00+05:30`).toISOString();
@@ -101,6 +105,10 @@ export async function POST(req: Request) {
   for (const row of rows) {
     const callId = String(row.call_id ?? "").trim();
     if (callId && (known.has(callId) || seenNow.has(callId))) { skipped.duplicate++; continue; }
+    if (liveOnly && row.call_time) {
+      const callDay = new Date(new Date(toIso(row.call_time, now)).getTime() + 5.5 * 3600_000).toISOString().slice(0, 10);
+      if (callDay < istToday) { skipped.earlier_day++; continue; }
+    }
     const seconds = toSeconds(row.duration_seconds);
     if (seconds !== null && seconds < MIN_SECONDS) { skipped.too_short++; continue; }
     const transcript = transcriptFor(row, source);

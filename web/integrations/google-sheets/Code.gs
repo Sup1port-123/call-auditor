@@ -23,7 +23,7 @@ var SHEETS = [
 ];
 
 var MIN_SECONDS = 60;       // calls shorter than this are not audited
-var LOOKBACK_DAYS = 2;      // only calls from the last N days are sent
+var LIVE_ONLY = true;       // only calls made today (IST) are sent; earlier days are never audited
 var MAX_ROWS_PER_RUN = 200; // calls sent per run per tab (the rest go in the next run)
 var SCAN_ROWS = 30000;      // how many rows from the bottom of the tab are scanned
 var CHUNK = 50;             // calls per request
@@ -213,6 +213,13 @@ function colIndex_(headers, names) {
   return -1;
 }
 
+// Calendar day (IST, yyyy-MM-dd) of a sheet date cell, or '' when it is not a date.
+function dayStr_(v) {
+  if (v instanceof Date) return Utilities.formatDate(v, 'Asia/Kolkata', 'yyyy-MM-dd');
+  var m = /^(\d{4}-\d{2}-\d{2})/.exec(String(v).trim());
+  return m ? m[1] : '';
+}
+
 function cellDate_(v) {
   if (v instanceof Date) return v;
   var d = new Date(String(v).replace(' ', 'T'));
@@ -268,7 +275,7 @@ function syncTab_(cfg, key) {
   var times = column_(sheet, from, n, idx.call_time);
   var agentNames = column_(sheet, from, n, idx.agent_name);
   var agentIds = column_(sheet, from, n, idx.agent_id);
-  var cutoff = new Date(Date.now() - LOOKBACK_DAYS * 86400000);
+  var today = Utilities.formatDate(new Date(), 'Asia/Kolkata', 'yyyy-MM-dd');
 
   var pending = []; // row numbers, newest first
   for (var i = n - 1; i >= 0 && pending.length < MAX_ROWS_PER_RUN; i--) {
@@ -283,9 +290,9 @@ function syncTab_(cfg, key) {
       var sec = seconds_(durations[i], cfg.durationUnit);
       if (sec !== null && sec < MIN_SECONDS) continue;
     }
-    if (times) {
-      var d = cellDate_(times[i]);
-      if (d && d < cutoff) continue;
+    if (times && LIVE_ONLY) {
+      var cd = dayStr_(times[i]);
+      if (cd && cd < today) continue;
     }
     pending.push(from + i);
   }

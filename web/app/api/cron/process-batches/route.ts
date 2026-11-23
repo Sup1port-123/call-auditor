@@ -39,7 +39,7 @@ export async function GET(req: Request) {
   // Only fresh batches are worked on. Batch ids start with their creation date
   // (YYYYMMDD), so older batches that never finished are left alone instead of
   // being scored (and emailed) days later. Override with PROCESS_MAX_AGE_DAYS.
-  const maxAgeDays = Number(process.env.PROCESS_MAX_AGE_DAYS ?? 2);
+  const maxAgeDays = Number(process.env.PROCESS_MAX_AGE_DAYS ?? 1);
   const cutoff = new Date(Date.now() + 5.5 * 3600_000 - maxAgeDays * 86_400_000)
     .toISOString()
     .slice(0, 10)
