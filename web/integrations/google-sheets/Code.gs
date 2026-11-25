@@ -158,6 +158,20 @@ function reportNow() {
   }
 }
 
+/**
+ * Sends one small test email to ADDRESS and logs what the mail server answered.
+ * Change ADDRESS below, then Run. Use it to find out why a mailbox gets no reports.
+ */
+function testEmail() {
+  var ADDRESS = 'alwarquality_t@gromo.in';
+  var p = PropertiesService.getScriptProperties();
+  var bypass = p.getProperty('OTIS_BYPASS');
+  var res = UrlFetchApp.fetch(
+    OTIS_URL.replace('/api/ingest/sheet', '/api/cron/interval-report') + '?test=1&to=' + encodeURIComponent(ADDRESS) + '&key=' + encodeURIComponent(p.getProperty('OTIS_KEY')),
+    { headers: bypass ? { 'x-vercel-protection-bypass': bypass } : {}, muteHttpExceptions: true });
+  Logger.log(res.getResponseCode() + ' ' + res.getContentText().slice(0, 800));
+}
+
 /** Emails the once-a-day report (previous day) to Vijay, Sameer and Anjali. Runs at about 09:00 IST. */
 function dailyReportNow() {
   try {
