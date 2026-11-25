@@ -26,13 +26,20 @@ export async function GET(req: Request) {
     const supabase = createAdminClient();
     const { date } = istParts();
     if (!force) {
+      // Two schedulers can call this (Vercel cron and the Apps Script trigger), so
+      // make sure the day's report goes out only once. `last_sent_date` is used when
+      // that column exists; `updated_at` (always there) is the fallback.
       const { data: settings } = await supabase
         .from("report_settings")
-        .select("last_sent_date")
+        .select("*")
         .eq("id", "default")
-        .maybeSingle<{ last_sent_date: string | null }>();
+        .maybeSingle<{ last_sent_date?: string | null; updated_at?: string | null }>();
       if (settings?.last_sent_date === date) {
         return NextResponse.json({ skipped: "already sent today", date });
+      }
+      const lastMs = settings?.updated_at ? new Date(settings.updated_at).getTime() : 0;
+      if (lastMs && Date.now() - lastMs < 18 * 3600_000) {
+        return NextResponse.json({ skipped: "a report was sent in the last 18 hours", date });
       }
     }
 
@@ -40,6 +47,7 @@ export async function GET(req: Request) {
     const { inboundCount, outboundCount, delivery } = await generateAndSendReport({ emails, istDate: reportDate });
 
     if (!force) {
+      await supabase.from("report_settings").update({ updated_at: new Date().toISOString() }).eq("id", "default");
       await supabase.from("report_settings").update({ last_sent_date: date }).eq("id", "default");
     }
     return NextResponse.json({ sent: true, inboundCount, outboundCount, date, reportDate, delivery });
