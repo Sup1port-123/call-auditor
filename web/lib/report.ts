@@ -158,7 +158,9 @@ function renderTransferReasons(rows: ReportRow[]): string {
     '<ul style="margin:0;padding:12px 16px 12px 28px;background:#fff;border:1px solid #e5e7eb;border-radius:6px;list-style:none;">' + items + '</ul>';
 }
 
-async function sendReportEmail(opts: { to: string[]; subject: string; html: string; filename: string; xlsx: Uint8Array }): Promise<void> {
+export type DeliveryInfo = { accepted: string[]; rejected: string[] };
+
+async function sendReportEmail(opts: { to: string[]; subject: string; html: string; filename: string; xlsx: Uint8Array }): Promise<DeliveryInfo> {
   const smtpUser = process.env.SMTP_USER;
   const smtpPass = process.env.SMTP_PASS;
   const from = process.env.REPORT_FROM_EMAIL || smtpUser;
@@ -169,8 +171,21 @@ async function sendReportEmail(opts: { to: string[]; subject: string; html: stri
     const transport = createTransport(
       { host: smtpHost, port: 587, secure: false, auth: { user: smtpUser, pass: smtpPass } },
     );
-    await transport.sendMail({ from: from || smtpUser, to: opts.to.join(", "), subject: opts.subject, html: opts.html, attachments: [{ filename: opts.filename, content: Buffer.from(opts.xlsx) }] });
-    return;
+    // One message per recipient, so a problem with one mailbox cannot affect the
+    // others, and the mail server's answer is known for each address.
+    const delivery: DeliveryInfo = { accepted: [], rejected: [] };
+    for (const to of opts.to) {
+      try {
+        const info = await transport.sendMail({ from: from || smtpUser, to, subject: opts.subject, html: opts.html, attachments: [{ filename: opts.filename, content: Buffer.from(opts.xlsx) }] });
+        delivery.accepted.push(...((info.accepted ?? []) as string[]).map(String));
+        delivery.rejected.push(...((info.rejected ?? []) as string[]).map(String));
+      } catch (err) {
+        console.error(`[otis] report email to ${to} failed:`, err);
+        delivery.rejected.push(to);
+      }
+    }
+    console.log(`[otis] report email "${opts.subject}": accepted=${delivery.accepted.join(",")} rejected=${delivery.rejected.join(",")}`);
+    return delivery;
   }
 
   const apiKey = process.env.RESEND_API_KEY;
@@ -184,6 +199,7 @@ async function sendReportEmail(opts: { to: string[]; subject: string; html: stri
     body: JSON.stringify({ from, to: opts.to, subject: opts.subject, html: opts.html, attachments: [{ filename: opts.filename, content: base64 }] }),
   });
   if (!res.ok) { const body = await res.text(); throw new Error(`Resend ${res.status}: ${body.slice(0, 300)}`); }
+  return { accepted: opts.to, rejected: [] };
 }
 
 function pct(score: number | null): number {
@@ -602,7 +618,7 @@ export async function generateAndSendReport(opts: {
   // of the calls of one IST day. `label` goes into the subject.
   range?: { gte: string; lte: string; label: string };
   skipIfEmpty?: boolean;
-}): Promise<{ inboundCount: number; outboundCount: number }> {
+}): Promise<{ inboundCount: number; outboundCount: number; delivery?: DeliveryInfo }> {
   const supabase = createAdminClient();
   const { gte, lte } = opts.range ?? istDayRangeUtc(opts.istDate);
   const dateCol = opts.range ? "audited_at" : "timestamp";
@@ -649,13 +665,13 @@ export async function generateAndSendReport(opts: {
   if (rows.length === 0) {
     // Still send something, so a quiet day (or a test on a day with no audits)
     // is not mistaken for a broken email setup.
-    await sendReportEmail({
+    const emptyDelivery = await sendReportEmail({
       to: opts.emails,
       subject: `Otis Daily Audit Report — ${displayDate} · no calls audited`,
       html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:760px;margin:0 auto;color:#111;">${emailHeader(`📊 Otis Daily Audit Report — ${displayDate}`, "No calls were audited on this day", "#1f3a5f")}<div style="padding:24px 0;font-size:14px;">${await buildHealthHtml().catch(() => "")}No completed audits were found for ${displayDate} (IST). If calls were expected, check that the Google Sheet sync or batch uploads ran and that their audits finished.</div></div>`,
       filename: `otis-daily-audit-report-${opts.istDate}.xlsx`, xlsx: allXlsx,
     });
-    return { inboundCount: 0, outboundCount: 0 };
+    return { inboundCount: 0, outboundCount: 0, delivery: emptyDelivery };
   }
   const healthHtml = await buildHealthHtml().catch(() => "");
   const scored = rows.filter(r => r.overall_score != null);
@@ -677,11 +693,12 @@ export async function generateAndSendReport(opts: {
   </div>`;
   const divider = '<hr style="border:none;border-top:2px solid #e5e7eb;margin:8px 0 24px 0;">';
   const errors: string[] = [];
+  let delivery: DeliveryInfo | undefined;
   try {
     const sections = [summary];
     if (inboundRows.length > 0) sections.push(await buildInboundHtml(inboundRows, opts.istDate));
     if (outboundRows.length > 0) sections.push(await buildOutboundHtml(outboundRows, opts.istDate));
-    await sendReportEmail({
+    delivery = await sendReportEmail({
       to: opts.emails,
       subject: `Otis Daily Audit Report — ${displayDate} · ${rows.length} calls${agentNames.length ? ` [${agentNames.join(", ")}]` : ""}`,
       html: sections.join(divider), filename: `otis-daily-audit-report-${opts.istDate}.xlsx`, xlsx: allXlsx,
@@ -689,5 +706,5 @@ export async function generateAndSendReport(opts: {
   } catch (err) { errors.push(`Daily report email failed: ${err instanceof Error ? err.message : String(err)}`); }
 
   if (errors.length > 0) throw new Error(errors.join("; "));
-  return { inboundCount: inboundRows.length, outboundCount: outboundRows.length };
+  return { inboundCount: inboundRows.length, outboundCount: outboundRows.length, delivery };
       }

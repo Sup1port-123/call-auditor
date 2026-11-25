@@ -31,7 +31,7 @@ export async function GET(req: Request) {
 
     const toMs = Date.now();
     const fromMs = toMs - HOURS * 3600_000;
-    const { inboundCount, outboundCount } = await generateAndSendReport({
+    const { inboundCount, outboundCount, delivery } = await generateAndSendReport({
       emails,
       istDate: new Date(toMs + 5.5 * 3600_000).toISOString().slice(0, 10),
       range: {
@@ -42,7 +42,7 @@ export async function GET(req: Request) {
       skipIfEmpty: true,
     });
     const quality = await checkQualityDrop(fromMs, toMs).catch((e) => ({ error: String(e) }));
-    return NextResponse.json({ sent: inboundCount + outboundCount > 0, inboundCount, outboundCount, hours: HOURS, quality });
+    return NextResponse.json({ sent: inboundCount + outboundCount > 0, inboundCount, outboundCount, hours: HOURS, quality, delivery });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[otis] interval-report crashed:", message);

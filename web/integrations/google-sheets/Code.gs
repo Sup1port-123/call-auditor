@@ -150,7 +150,7 @@ function reportNow() {
     var res = UrlFetchApp.fetch(
       OTIS_URL.replace('/api/ingest/sheet', '/api/cron/interval-report') + '?key=' + encodeURIComponent(p.getProperty('OTIS_KEY')),
       { headers: bypass ? { 'x-vercel-protection-bypass': bypass } : {}, muteHttpExceptions: true });
-    Logger.log(res.getResponseCode() + ' ' + res.getContentText().slice(0, 200));
+    Logger.log(res.getResponseCode() + ' ' + res.getContentText().slice(0, 600));
     if (res.getResponseCode() !== 200) alert_('Otis 3-hour report failed', 'Otis answered ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 300));
   } catch (e) {
     alert_('Otis 3-hour report crashed', String(e && e.stack ? e.stack : e));
@@ -166,7 +166,7 @@ function dailyReportNow() {
     var res = UrlFetchApp.fetch(
       OTIS_URL.replace('/api/ingest/sheet', '/api/cron/daily-report') + '?key=' + encodeURIComponent(p.getProperty('OTIS_KEY')),
       { headers: bypass ? { 'x-vercel-protection-bypass': bypass } : {}, muteHttpExceptions: true });
-    Logger.log(res.getResponseCode() + ' ' + res.getContentText().slice(0, 200));
+    Logger.log(res.getResponseCode() + ' ' + res.getContentText().slice(0, 600));
     if (res.getResponseCode() !== 200) alert_('Otis daily report failed', 'Otis answered ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 300));
   } catch (e) {
     alert_('Otis daily report crashed', String(e && e.stack ? e.stack : e));

@@ -37,12 +37,12 @@ export async function GET(req: Request) {
     }
 
     const reportDate = istParts(Date.now() - 24 * 60 * 60 * 1000).date;
-    const { inboundCount, outboundCount } = await generateAndSendReport({ emails, istDate: reportDate });
+    const { inboundCount, outboundCount, delivery } = await generateAndSendReport({ emails, istDate: reportDate });
 
     if (!force) {
       await supabase.from("report_settings").update({ last_sent_date: date }).eq("id", "default");
     }
-    return NextResponse.json({ sent: true, inboundCount, outboundCount, date, reportDate, to: emails.length });
+    return NextResponse.json({ sent: true, inboundCount, outboundCount, date, reportDate, delivery });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[otis] daily-report crashed:", message);
