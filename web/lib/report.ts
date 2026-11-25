@@ -368,7 +368,8 @@ function renderQueryReasons(rows: ReportRow[]): string {
   }
   if (reasons.size === 0) return "";
   const sorted = Array.from(reasons.entries()).sort((a, b) => b[1].count - a[1].count).slice(0, 8);
-  const total = sorted.reduce((s, e) => s + e[1].count, 0);
+  // Share of ALL inbound calls that had a query reason, not just of the top rows.
+  const total = Array.from(reasons.values()).reduce((s, e) => s + e.count, 0);
   const reasonRows = sorted.map(function(e: [string, { count: number; ids: InsightId[] }]) {
     const reason = e[0]; const count = e[1].count; const ids = e[1].ids;
     const p = total > 0 ? Math.round((count / total) * 100) : 0;
