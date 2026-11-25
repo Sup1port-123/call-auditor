@@ -83,7 +83,8 @@ export async function POST(req: Request) {
 
   // Live calls only: a call made on an earlier IST day is not audited.
   const istToday = new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10);
-  const liveOnly = process.env.LIVE_ONLY !== "off";
+  const backfill = url.searchParams.get("backfill") === "1"; // one-off history run: no live-only rule, no daily cap
+  const liveOnly = process.env.LIVE_ONLY !== "off" && !backfill;
 
   // Calls already audited today (IST) for a campaign count against its cap.
   const istStart = new Date(`${new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10)}T00:00:00+05:30`).toISOString();
@@ -117,9 +118,11 @@ export async function POST(req: Request) {
       : null;
     if (transcript ? wordCount(transcript) < MIN_WORDS : !recording) { skipped.no_content++; continue; }
     const agentName = (row.agent_name ?? body.default_agent ?? "").trim() || "No agent";
-    const left = await remainingFor(agentName);
-    if (left <= 0) { skipped.daily_cap++; continue; }
-    remaining.set(agentName, left - 1);
+    if (!backfill) {
+      const left = await remainingFor(agentName);
+      if (left <= 0) { skipped.daily_cap++; continue; }
+      remaining.set(agentName, left - 1);
+    }
     if (callId) seenNow.add(callId);
     if (!byAgent.has(agentName)) byAgent.set(agentName, []);
     byAgent.get(agentName)!.push({ row, transcript, seconds, recording });

@@ -204,6 +204,63 @@ function alertsNow() {
   }
 }
 
+/**
+ * One-off: audits EVERY inbound call of the Welcome campaign (agent id 6861ZW) in the
+ * Karta sheet, however old, and lists them in a new tab "welcome_inbound_ids".
+ * Calls Otis already has are skipped, so it is safe to run again. Run it once, wait
+ * for the scoring to finish, then ask for the report.
+ */
+function backfillWelcomeInbound() {
+  var p = PropertiesService.getScriptProperties();
+  var key = p.getProperty('OTIS_KEY');
+  var bypass = p.getProperty('OTIS_BYPASS');
+  var cfg = SHEETS[0]; // Karta
+  var book = SpreadsheetApp.openById(cfg.spreadsheetId);
+  var sheet = book.getSheetByName(cfg.tab);
+  var width = sheet.getLastColumn();
+  var headers = sheet.getRange(1, 1, 1, width).getValues()[0];
+  var idx = {};
+  Object.keys(ALIASES).forEach(function (k) { idx[k] = colIndex_(headers, ALIASES[k]); });
+  var n = sheet.getLastRow() - 1;
+  var ids = column_(sheet, 2, n, idx.call_id);
+  var agentIds = column_(sheet, 2, n, idx.agent_id);
+  var dirs = column_(sheet, 2, n, idx.direction);
+  var durs = column_(sheet, 2, n, idx.duration);
+  var times = column_(sheet, 2, n, idx.call_time);
+  var found = [];
+  for (var i = 0; i < n; i++) {
+    if (String(agentIds[i]).trim() === '6861ZW' && String(dirs[i]).trim().toLowerCase() === 'inbound' && String(ids[i]).trim() !== '') {
+      found.push(i + 2);
+    }
+  }
+  // List of every inbound Welcome call, for the report.
+  var tab = book.getSheetByName('welcome_inbound_ids') || book.insertSheet('welcome_inbound_ids');
+  tab.clear();
+  var list = [['call_id', 'call_time', 'duration_sec', 'sheet_row']].concat(found.map(function (row) {
+    var t = times[row - 2];
+    return [String(ids[row - 2]).trim(), t instanceof Date ? Utilities.formatDate(t, 'Asia/Kolkata', 'yyyy-MM-dd HH:mm:ss') : String(t), seconds_(durs[row - 2], cfg.durationUnit), row];
+  }));
+  tab.getRange(1, 1, list.length, 4).setValues(list);
+
+  // Send the ones long enough to be audited. Otis skips calls it already has.
+  var send = found.filter(function (row) { var s = seconds_(durs[row - 2], cfg.durationUnit); return s === null || s >= MIN_SECONDS; });
+  var label = 'Karta Welcome inbound backfill ' + Utilities.formatDate(new Date(), 'Asia/Kolkata', 'yyyy-MM-dd HH:mm');
+  var audited = 0, failed = 0;
+  for (var c = 0; c < send.length; c += CHUNK) {
+    var part = send.slice(c, c + CHUNK);
+    var payload = part.map(function (row) { return rowToPayload_(sheet.getRange(row, 1, 1, width).getValues()[0], idx, cfg); });
+    var last = c + CHUNK >= send.length;
+    var res = UrlFetchApp.fetch(OTIS_URL + '?key=' + encodeURIComponent(key) + '&backfill=1' + (last ? '&drive=1' : ''), {
+      method: 'post', contentType: 'application/json',
+      headers: bypass ? { 'x-vercel-protection-bypass': bypass } : {},
+      payload: JSON.stringify({ source: 'karta', label: label, rows: payload }), muteHttpExceptions: true,
+    });
+    if (res.getResponseCode() !== 200) { failed += part.length; Logger.log('Otis answered ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 300)); continue; }
+    audited += JSON.parse(res.getContentText()).audited || 0;
+  }
+  Logger.log('Welcome inbound calls found: ' + found.length + '; long enough to audit: ' + send.length + '; newly sent for audit: ' + audited + (failed ? '; failed: ' + failed : ''));
+}
+
 /** Run this once: sync every TRIGGER_MINUTES, scoring every 5 minutes, report every 3 hours. */
 function installTriggers() {
   ScriptApp.getProjectTriggers().forEach(function (t) { ScriptApp.deleteTrigger(t); });
@@ -254,6 +311,31 @@ function seconds_(v, unit) {
 function column_(sheet, from, n, idx) {
   if (idx < 0) return null;
   return sheet.getRange(from, idx + 1, n, 1).getValues().map(function (r) { return r[0]; });
+}
+
+// One sheet row -> the call as Otis expects it.
+function rowToPayload_(r, idx, cfg) {
+  var rawAgent = idx.agent_name >= 0 ? String(r[idx.agent_name]).trim() : '';
+  var agentId = idx.agent_id >= 0 ? String(r[idx.agent_id]).trim() : '';
+  var agent = AGENT_ID_MAP[agentId] || (rawAgent ? (AGENT_MAP[rawAgent] || rawAgent) : '');
+  var outbound = idx.direction >= 0 && String(r[idx.direction]).toLowerCase() === 'outbound';
+  var mobile = '';
+  if (outbound && idx.to_number >= 0) mobile = r[idx.to_number];
+  else if (idx.from_number >= 0) mobile = r[idx.from_number];
+  else if (idx.to_number >= 0) mobile = r[idx.to_number];
+  var t = idx.call_time >= 0 ? r[idx.call_time] : '';
+  var sec = idx.duration >= 0 ? seconds_(r[idx.duration], cfg.durationUnit) : null;
+  return {
+    call_id: String(r[idx.call_id]).trim(),
+    agent_name: agent,
+    recording_url: idx.recording_url >= 0 ? String(r[idx.recording_url]).trim() : '',
+    transcript: idx.transcript >= 0 ? String(r[idx.transcript]) : '',
+    summary: idx.summary >= 0 ? String(r[idx.summary]) : '',
+    duration_seconds: sec,
+    call_time: t instanceof Date ? Utilities.formatDate(t, 'Asia/Kolkata', "yyyy-MM-dd'T'HH:mm:ss") : String(t),
+    mobile: String(mobile),
+    disconnect_reason: idx.disconnect_reason >= 0 ? String(r[idx.disconnect_reason]) : '',
+  };
 }
 
 function syncTab_(cfg, key) {
@@ -314,30 +396,7 @@ function syncTab_(cfg, key) {
 
   var rows = pending.map(function (rowNumber) {
     var r = sheet.getRange(rowNumber, 1, 1, width).getValues()[0];
-    var rawAgent = idx.agent_name >= 0 ? String(r[idx.agent_name]).trim() : '';
-    var agentId = idx.agent_id >= 0 ? String(r[idx.agent_id]).trim() : '';
-    var agent = AGENT_ID_MAP[agentId] || (rawAgent ? (AGENT_MAP[rawAgent] || rawAgent) : '');
-    var outbound = idx.direction >= 0 && String(r[idx.direction]).toLowerCase() === 'outbound';
-    var mobile = '';
-    if (outbound && idx.to_number >= 0) mobile = r[idx.to_number];
-    else if (idx.from_number >= 0) mobile = r[idx.from_number];
-    else if (idx.to_number >= 0) mobile = r[idx.to_number];
-    var t = idx.call_time >= 0 ? r[idx.call_time] : '';
-    var sec2 = idx.duration >= 0 ? seconds_(r[idx.duration], cfg.durationUnit) : null;
-    return {
-      rowNumber: rowNumber,
-      payload: {
-        call_id: String(r[idx.call_id]).trim(),
-        agent_name: agent,
-        recording_url: idx.recording_url >= 0 ? String(r[idx.recording_url]).trim() : '',
-        transcript: idx.transcript >= 0 ? String(r[idx.transcript]) : '',
-        summary: idx.summary >= 0 ? String(r[idx.summary]) : '',
-        duration_seconds: sec2,
-        call_time: t instanceof Date ? Utilities.formatDate(t, 'Asia/Kolkata', "yyyy-MM-dd'T'HH:mm:ss") : String(t),
-        mobile: String(mobile),
-        disconnect_reason: idx.disconnect_reason >= 0 ? String(r[idx.disconnect_reason]) : '',
-      },
-    };
+    return { rowNumber: rowNumber, payload: rowToPayload_(r, idx, cfg) };
   });
 
   var sent = 0, audited = 0, failed = 0;
