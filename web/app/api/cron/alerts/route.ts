@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { checkCriticalAudits } from "@/lib/alerts";
+import { checkCriticalAudits, checkTranscriptionFailures } from "@/lib/alerts";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -16,7 +16,9 @@ export async function GET(req: Request) {
       (url.searchParams.get("key") === secret ||
         req.headers.get("authorization") === `Bearer ${secret}`);
     if (!authorized) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-    return NextResponse.json(await checkCriticalAudits());
+    const critical = await checkCriticalAudits();
+    const transcription = await checkTranscriptionFailures().catch((e) => ({ error: String(e) }));
+    return NextResponse.json({ ...critical, transcription });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[otis] alerts crashed:", message);

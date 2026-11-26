@@ -162,3 +162,52 @@ export async function checkQualityDrop(windowFromMs: number, windowToMs: number)
   );
   return { sent: true, windowPct: winPct, basePct: basePct ?? undefined, calls: win.length };
 }
+
+// Convozen audits are transcribed by AssemblyAI. When it refuses (credit used up,
+// key invalid, rate limit) the audits fail one after another. Email when that
+// happens, at most once per 3 hours.
+const FAIL_MARK = "[alerted]";
+export async function checkTranscriptionFailures(): Promise<{ failed: number; alerted: boolean }> {
+  const db = createAdminClient();
+  const since = new Date(Date.now() - 60 * 60_000).toISOString();
+  const { data, error } = await db
+    .from("audits")
+    .select("id, error_message")
+    .eq("status", "failed")
+    .eq("source", "convozen_call_details")
+    .like("error_message", "%AssemblyAI submit failed%")
+    .not("error_message", "like", `%${FAIL_MARK}%`)
+    .gte("created_at", since)
+    .limit(200);
+  if (error) throw new Error(error.message);
+  const rows = data ?? [];
+  if (rows.length < 3) return { failed: rows.length, alerted: false };
+
+  // Already told you in the last 3 hours? Mark these and stay quiet.
+  const recentSince = new Date(Date.now() - 3 * 3600_000).toISOString();
+  const { data: recent } = await db
+    .from("audits")
+    .select("id")
+    .eq("source", "convozen_call_details")
+    .like("error_message", `%${FAIL_MARK}%`)
+    .gte("created_at", recentSince)
+    .limit(1);
+  const alreadyTold = (recent ?? []).length > 0;
+
+  if (!alreadyTold) {
+    const sample = String(rows[0].error_message).replace(/\s+/g, " ").slice(0, 240);
+    await sendAlertEmail(
+      "🚨 Otis alert — Convozen audits are failing (AssemblyAI)",
+      shell(
+        "Convozen audits are failing because of AssemblyAI",
+        `<p><b>${rows.length}</b> Convozen audits failed in the last hour because AssemblyAI returned an error.</p>
+         <p>Please check the AssemblyAI account: <b>credit / balance, payment status and the API key</b>. Until it is fixed, no new Convozen call will be audited (Karta, Welcome and Bajaj are not affected).</p>
+         <p style="font-size:12px;color:#6b7280;">Error seen: ${sample}</p>`,
+      ),
+    );
+  }
+  await Promise.all(rows.map((r) =>
+    db.from("audits").update({ error_message: `${r.error_message} ${FAIL_MARK}` }).eq("id", r.id),
+  ));
+  return { failed: rows.length, alerted: !alreadyTold };
+}
