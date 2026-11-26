@@ -17,6 +17,8 @@ export const maxDuration = 60;
 const MAX_ROWS = 500;
 // At most this many calls are audited per campaign (agent, per vendor) each IST day.
 const DAILY_CAP = Number(process.env.DAILY_AUDIT_CAP_PER_CAMPAIGN ?? 100);
+// Convozen calls are transcribed from the recording (paid per minute), so they get their own, lower daily cap.
+const DAILY_CAP_CONVOZEN = Number(process.env.DAILY_AUDIT_CAP_CONVOZEN ?? 80);
 // How long to keep driving the new batches after answering the sync script.
 const DRIVE_BUDGET_MS = 45_000;
 
@@ -96,7 +98,7 @@ export async function POST(req: Request) {
     const aid = agentName === "No agent" ? null : agentIdFor(agentName);
     q = aid ? q.eq("agent_id", aid) : q.is("agent_id", null);
     const { count } = await q;
-    const left = Math.max(0, DAILY_CAP - (count ?? 0));
+    const left = Math.max(0, (source === "convozen" ? DAILY_CAP_CONVOZEN : DAILY_CAP) - (count ?? 0));
     remaining.set(agentName, left);
     return left;
   }
