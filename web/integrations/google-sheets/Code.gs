@@ -19,7 +19,10 @@ var OTIS_URL = 'https://call-auditor-otis4.vercel.app/api/ingest/sheet';
 //   durationUnit: unit of the call-duration column ('seconds' or 'minutes')
 var SHEETS = [
   { spreadsheetId: '17fMDdhecRdmaXs5abZD3yFx2m3tQ7pneLIrWKdIbLxo', tab: 'ai_karta_logs', source: 'karta', durationUnit: 'seconds' },
-  { spreadsheetId: '1ysTOFI3kqNTSQ2_cE6zTOhM5US4bmIUh03UpkqnDnUQ', tab: 'ai_convozen_logs', source: 'convozen', durationUnit: 'seconds' },
+  // Convozen is audited from the call RECORDING (never from the chat text). Its recording
+  // links stop working about 15 minutes after the call, so this tab is synced every 5
+  // minutes (syncFast) and only calls that ended in the last maxAgeMin minutes are sent.
+  { spreadsheetId: '1ysTOFI3kqNTSQ2_cE6zTOhM5US4bmIUh03UpkqnDnUQ', tab: 'ai_convozen_logs', source: 'convozen', durationUnit: 'seconds', fast: true, recordingOnly: true, maxAgeMin: 12, scanRows: 800 },
 ];
 
 var MIN_SECONDS = 60;       // calls shorter than this are not audited
@@ -89,7 +92,7 @@ function syncNow() {
     var key = PropertiesService.getScriptProperties().getProperty('OTIS_KEY');
     if (!key) throw new Error('Add the script property OTIS_KEY (Project Settings > Script properties).');
     var summary = [];
-    SHEETS.forEach(function (cfg) { summary.push(cfg.tab + ': ' + syncTab_(cfg, key)); });
+    SHEETS.forEach(function (cfg) { if (!cfg.fast) summary.push(cfg.tab + ': ' + syncTab_(cfg, key)); });
     Logger.log(summary.join('\n'));
     if (/failed/.test(summary.join(' '))) alert_('Otis sheet sync: some calls failed', summary.join('\n'));
   } catch (e) {
@@ -110,6 +113,21 @@ function alert_(subject, body) {
     MailApp.sendEmail(to, subject, body + '\n\nTime: ' + Utilities.formatDate(new Date(), 'Asia/Kolkata', 'yyyy-MM-dd HH:mm') + ' IST');
   } catch (e2) {
     Logger.log('Could not send alert: ' + e2);
+  }
+}
+
+/** Every 5 minutes: syncs the tabs whose recordings expire quickly (Convozen). */
+function syncFast() {
+  try {
+    var key = PropertiesService.getScriptProperties().getProperty('OTIS_KEY');
+    if (!key) throw new Error('Add the script property OTIS_KEY (Project Settings > Script properties).');
+    var summary = [];
+    SHEETS.forEach(function (cfg) { if (cfg.fast) summary.push(cfg.tab + ': ' + syncTab_(cfg, key)); });
+    Logger.log(summary.join('\n'));
+    if (/failed/.test(summary.join(' '))) alert_('Otis fast sync: some calls failed', summary.join('\n'));
+  } catch (e) {
+    alert_('Otis fast sync crashed', String(e && e.stack ? e.stack : e));
+    throw e;
   }
 }
 
@@ -266,6 +284,7 @@ function installTriggers() {
   ScriptApp.getProjectTriggers().forEach(function (t) { ScriptApp.deleteTrigger(t); });
   ScriptApp.newTrigger('syncNow').timeBased().everyMinutes(TRIGGER_MINUTES).create();
   ScriptApp.newTrigger('processNow').timeBased().everyMinutes(5).create();
+  ScriptApp.newTrigger('syncFast').timeBased().everyMinutes(5).create();
   ScriptApp.newTrigger('reportNow').timeBased().everyHours(3).create();
   ScriptApp.newTrigger('alertsNow').timeBased().everyMinutes(15).create();
   ScriptApp.newTrigger('dailyReportNow').timeBased().atHour(9).nearMinute(0).inTimezone('Asia/Kolkata').everyDays(1).create();
@@ -289,6 +308,13 @@ function dayStr_(v) {
   if (v instanceof Date) return Utilities.formatDate(v, 'Asia/Kolkata', 'yyyy-MM-dd');
   var m = /^(\d{4}-\d{2}-\d{2})/.exec(String(v).trim());
   return m ? m[1] : '';
+}
+
+// A sheet date/time (India time, e.g. "2026-11-13 00:02:34") as milliseconds, or null.
+function istMs_(v) {
+  if (v instanceof Date) return v.getTime();
+  var d = new Date(String(v).trim().replace(' ', 'T') + '+05:30');
+  return isNaN(d.getTime()) ? null : d.getTime();
 }
 
 function cellDate_(v) {
@@ -329,8 +355,8 @@ function rowToPayload_(r, idx, cfg) {
     call_id: String(r[idx.call_id]).trim(),
     agent_name: agent,
     recording_url: idx.recording_url >= 0 ? String(r[idx.recording_url]).trim() : '',
-    transcript: idx.transcript >= 0 ? String(r[idx.transcript]) : '',
-    summary: idx.summary >= 0 ? String(r[idx.summary]) : '',
+    transcript: (cfg.recordingOnly || idx.transcript < 0) ? '' : String(r[idx.transcript]),
+    summary: (cfg.recordingOnly || idx.summary < 0) ? '' : String(r[idx.summary]),
     duration_seconds: sec,
     call_time: t instanceof Date ? Utilities.formatDate(t, 'Asia/Kolkata', "yyyy-MM-dd'T'HH:mm:ss") : String(t),
     mobile: String(mobile),
@@ -362,7 +388,7 @@ function syncTab_(cfg, key) {
 
   // Read only the small columns for the whole window; the large transcript
   // and recording cells are read later, for the calls that qualify.
-  var from = Math.max(2, lastRow - SCAN_ROWS + 1);
+  var from = Math.max(2, lastRow - (cfg.scanRows || SCAN_ROWS) + 1);
   var n = lastRow - from + 1;
   var ids = column_(sheet, from, n, idx.call_id);
   var done = column_(sheet, from, n, statusCol);
@@ -371,6 +397,8 @@ function syncTab_(cfg, key) {
   var times = column_(sheet, from, n, idx.call_time);
   var agentNames = column_(sheet, from, n, idx.agent_name);
   var agentIds = column_(sheet, from, n, idx.agent_id);
+  var recs = cfg.recordingOnly ? column_(sheet, from, n, idx.recording_url) : null;
+  var nowMs = Date.now();
   var today = Utilities.formatDate(new Date(), 'Asia/Kolkata', 'yyyy-MM-dd');
 
   var pending = []; // row numbers, newest first
@@ -389,6 +417,14 @@ function syncTab_(cfg, key) {
     if (times && LIVE_ONLY) {
       var cd = dayStr_(times[i]);
       if (cd && cd < today) continue;
+    }
+    if (cfg.recordingOnly) {
+      // Audited from the recording only: needs a link, and the link must still work.
+      if (!recs || !/^https?:\/\//i.test(String(recs[i]).trim())) continue;
+      if (cfg.maxAgeMin) {
+        var rowMs = times ? istMs_(times[i]) : null;
+        if (rowMs === null || nowMs - rowMs > cfg.maxAgeMin * 60000) continue;
+      }
     }
     pending.push(from + i);
   }

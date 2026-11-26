@@ -112,7 +112,9 @@ export async function POST(req: Request) {
     }
     const seconds = toSeconds(row.duration_seconds);
     if (seconds !== null && seconds < MIN_SECONDS) { skipped.too_short++; continue; }
-    const transcript = transcriptFor(row, source);
+    // Convozen is audited from the recording only, never from the chat text.
+    const audioOnly = source === "convozen" && process.env.CONVOZEN_AUDIO_ONLY !== "off";
+    const transcript = audioOnly ? null : transcriptFor(row, source);
     const recording = /^https?:\/\//i.test(String(row.recording_url ?? "").trim())
       ? String(row.recording_url).trim().replace(/\s+/g, "")
       : null;

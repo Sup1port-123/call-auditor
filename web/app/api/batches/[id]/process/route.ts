@@ -43,7 +43,7 @@ export async function POST(
     // Phase 1: submit queued rows to transcription service.
     const { data: queued } = await supabase
       .from("audits")
-      .select("id, target")
+      .select("id, target, source")
       .eq("batch_id", id)
       .eq("status", "queued")
       .limit(SUBMIT_CHUNK);
@@ -59,6 +59,9 @@ export async function POST(
               audioUrl: a.target,
               webhookUrl,
               auditId: a.id,
+              // Convozen calls are audited from the recording: AssemblyAI gives
+              // word-for-word text with speakers and times.
+              provider: a.source === "convozen_call_details" && process.env.CONVOZEN_TRANSCRIBER !== "gemini" ? "assemblyai" : undefined,
             });
             // For sync providers (Deepgram, Sarvam, Whisper), the transcript is
             // returned immediately — save it now so Phase 2 / finalize can score it.

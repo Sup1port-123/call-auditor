@@ -275,6 +275,8 @@ export async function submitTranscription(opts: {
 audioUrl: string;
 webhookUrl: string;
 auditId: string;
+// "assemblyai": skip Gemini and send straight to AssemblyAI (speaker labels + timestamps).
+provider?: "assemblyai";
 }): Promise<{
 transcriptId: string;
 transcript?: string;
@@ -284,7 +286,7 @@ const assemblyKey = process.env.ASSEMBLYAI_API_KEY;
 const deepgramKey = process.env.DEEPGRAM_API_KEY;
 const sarvamKey = process.env.SARVAM_API_KEY;
 // Gemini voice-to-voice: try Gemini first; on any error auto-switch to AssemblyAI/Whisper
-if (process.env.GOOGLE_API_KEY) {
+if (process.env.GOOGLE_API_KEY && !(opts.provider === "assemblyai" && assemblyKey)) {
   try {
     return await submitTranscriptionWithGemini(opts.audioUrl);
   } catch (err) {
